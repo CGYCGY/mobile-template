@@ -1,0 +1,8 @@
+# Smoke flow: launch the dev variant and verify the sign-in screen renders.
+# Run with: `maestro test e2e/smoke.yaml`
+appId: com.example.mobiletemplate.dev
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Sign in"
+- takeScreenshot: smoke-launch

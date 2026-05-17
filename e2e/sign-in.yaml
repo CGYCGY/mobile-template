@@ -1,0 +1,21 @@
+# Sign-in flow.
+#
+# The real WorkOS hosted UI opens a browser tab via expo-web-browser, which
+# Maestro cannot reliably drive across platforms. To exercise this flow in CI,
+# build the dev variant with EXPO_PUBLIC_E2E_MOCK_AUTH=1 so the auth boundary
+# returns a stubbed session instead of launching the browser.
+#
+# Run with:
+#   EXPO_PUBLIC_E2E_MOCK_AUTH=1 maestro test e2e/sign-in.yaml
+env:
+  EXPO_PUBLIC_E2E_MOCK_AUTH: "1"
+appId: com.example.mobiletemplate.dev
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Sign in"
+- tapOn: "Sign in with WorkOS"
+- assertVisible:
+    text: "Home"
+    timeout: 15000
+- takeScreenshot: sign-in-success
