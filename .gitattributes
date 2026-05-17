@@ -1,0 +1,24 @@
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.bash text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.avif binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+
+bun.lock     -diff linguist-generated
+package-lock.json -diff linguist-generated
+pnpm-lock.yaml    -diff linguist-generated
+yarn.lock         -diff linguist-generated

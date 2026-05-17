@@ -1,0 +1,63 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+/test-results/
+
+# expo
+.expo/
+.expo-shared/
+dist/
+web-build/
+expo-env.d.ts
+
+# native build outputs (prebuild is reproducible, do not commit)
+/ios/
+/android/
+/build/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.log
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.local.example
+!.env.test.example
+
+# e2e secrets (real test-user credentials, never commit)
+/docs/test_cred.md
+
+# eas / expo build artifacts
+/.eas/
+
+# typescript
+*.tsbuildinfo
+
+# convex generated files (overwritten by `npx convex dev`, stubs committed)
+/convex/_generated/*.js
+/convex/_generated/server.d.ts
+/convex/_generated/dataModel.d.ts
+
+# convex bundler tmpdir (used on WSL where /tmp is on a different filesystem)
+/.convex-tmp/
+
+# convex source-tree .js (only .ts is authored; .js here is a stale build artifact)
+/convex/*.js
