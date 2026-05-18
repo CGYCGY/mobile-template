@@ -1,3 +1,4 @@
+import QuickCrypto from 'react-native-quick-crypto';
 import { env } from '@/env';
 import { generatePkcePair, type PkcePair } from './pkce';
 
@@ -47,7 +48,9 @@ export async function buildAuthorizeUrl(
 }
 
 function cryptoRandomState(): string {
-  return (
-    Math.random().toString(36).slice(2) + Date.now().toString(36)
-  ).slice(0, 32);
+  return Buffer.from(QuickCrypto.randomBytes(16))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 }

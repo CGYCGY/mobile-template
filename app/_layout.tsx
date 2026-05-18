@@ -1,5 +1,7 @@
+import '@/lib/sentry';
+
 import { DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import * as Sentry from '@sentry/react-native';
+import { Sentry } from '@/lib/sentry';
 import { ConvexProvider } from 'convex/react';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
@@ -10,7 +12,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { TamaguiProvider } from 'tamagui';
 import { convexClient } from '@/lib/convex';
-import { PostHogProvider } from '@/lib/posthog';
+import { PostHogProvider, postHogProviderProps } from '@/lib/posthog';
 import tamaguiConfig from '@/tamagui.config';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
@@ -56,7 +58,7 @@ function RootLayout() {
 
   return (
     <RootErrorBoundary>
-      <PostHogProvider>
+      <PostHogProvider {...postHogProviderProps}>
         <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
           <ThemeProvider value={DefaultTheme}>
             <ConvexProvider client={convexClient}>
