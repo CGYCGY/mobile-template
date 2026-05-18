@@ -42,27 +42,6 @@ export const getByAuthId = query({
   },
 });
 
-export const upsert = mutation({
-  args: {
-    authId: v.string(),
-    email: v.string(),
-    name: v.string(),
-  },
-  handler: async (ctx, { authId, email, name }) => {
-    const existing = await ctx.db
-      .query('users')
-      .withIndex('authId', (q) => q.eq('authId', authId))
-      .unique();
-
-    if (existing) {
-      await ctx.db.patch(existing._id, { email, name });
-      return existing._id;
-    }
-
-    return ctx.db.insert('users', { authId, email, name });
-  },
-});
-
 export const completeOnboarding = mutation({
   args: v.object({
     displayName: v.string(),
@@ -116,6 +95,14 @@ export const updateProfile = mutation({
       throw new Error(
         'User row not found — WorkOS webhook has not synced this user yet.',
       );
+    }
+    // Skip patch when nothing changed: avoids a write and the subscription
+    // invalidation it triggers across every getMe subscriber.
+    if (
+      user.displayName === parsed.displayName &&
+      (user.bio ?? '') === (parsed.bio ?? '')
+    ) {
+      return user._id;
     }
     await ctx.db.patch(user._id, {
       displayName: parsed.displayName,

@@ -15,12 +15,17 @@ type MeRow = {
 };
 
 type UsersApi = {
-  me: FunctionReference<'query', 'public', Record<string, never>, MeRow | null>;
+  getMe: FunctionReference<
+    'query',
+    'public',
+    Record<string, never>,
+    MeRow | null
+  >;
 };
 
 export default function HomeScreen() {
   const usersApi = api.users as unknown as UsersApi;
-  const me = useQuery(usersApi.me);
+  const me = useQuery(usersApi.getMe);
   const cachedUser = useAuthStore((s) => s.user);
 
   return (

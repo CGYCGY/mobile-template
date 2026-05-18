@@ -27,10 +27,14 @@ export const { authKitEvent } = authKit.events({
       console.warn(`User not found for update: ${event.data.id}`);
       return;
     }
-    await ctx.db.patch(user._id, {
-      email: event.data.email,
-      name: `${event.data.firstName ?? ''} ${event.data.lastName ?? ''}`.trim(),
-    });
+    const name =
+      `${event.data.firstName ?? ''} ${event.data.lastName ?? ''}`.trim();
+    // WorkOS can fire user.updated on every session refresh; skip the patch
+    // when nothing changed so we don't invalidate every getMe subscriber.
+    if (user.email === event.data.email && user.name === name) {
+      return;
+    }
+    await ctx.db.patch(user._id, { email: event.data.email, name });
   },
   'user.deleted': async (ctx, event) => {
     const user = await ctx.db
