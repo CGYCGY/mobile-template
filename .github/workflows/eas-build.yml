@@ -48,6 +48,7 @@ on:
 jobs:
   build:
     name: EAS Build (${{ inputs.profile || 'preview' }} / ${{ inputs.platform || 'all' }})
+    if: ${{ !github.event.repository.is_template }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

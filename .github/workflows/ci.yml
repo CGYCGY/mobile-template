@@ -12,6 +12,7 @@ concurrency:
 jobs:
   lint-typecheck-test:
     name: Lint, Typecheck, Test
+    if: ${{ !github.event.repository.is_template }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
