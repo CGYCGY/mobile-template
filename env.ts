@@ -24,9 +24,11 @@ const clientRuntime = {
   EXPO_PUBLIC_POSTHOG_HOST: process.env.EXPO_PUBLIC_POSTHOG_HOST,
 };
 
+const emptyToUndefined = (v: string | undefined) => (v === '' ? undefined : v);
+
 const buildRuntime = {
-  SENTRY_DSN: process.env.SENTRY_DSN,
-  SENTRY_AUTH_TOKEN: process.env.SENTRY_AUTH_TOKEN,
+  SENTRY_DSN: emptyToUndefined(process.env.SENTRY_DSN),
+  SENTRY_AUTH_TOKEN: emptyToUndefined(process.env.SENTRY_AUTH_TOKEN),
 };
 
 const clientResult = clientSchema.safeParse(clientRuntime);

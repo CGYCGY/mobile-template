@@ -30,6 +30,7 @@
     "date-fns": "^4.1.0",
     "expo": "~55.0.14",
     "expo-blur": "~55.0.14",
+    "expo-build-properties": "~55.0.14",
     "expo-camera": "~55.0.18",
     "expo-constants": "~55.0.16",
     "expo-crypto": "~55.0.15",

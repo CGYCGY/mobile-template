@@ -1,5 +1,5 @@
 import type { ExpoConfig } from 'expo/config';
-import './env';
+import './env.ts';
 
 type Variant = 'dev' | 'preview' | 'production';
 
