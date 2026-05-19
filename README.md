@@ -8,7 +8,7 @@ Opinionated starter for cross-platform mobile apps. Pairs with [webapp-template]
 - **Expo Router** — file-based routing in `app/`
 - **Bun** — package manager + runtime
 - **Convex** — DB, realtime, auth bridge, R2 presigning, push fan-out
-- **WorkOS AuthKit** (`@workos-inc/authkit-react-native`) — OAuth + PKCE flow, refresh token in SecureStore
+- **WorkOS AuthKit** — OAuth + PKCE flow implemented with `expo-web-browser` + `expo-crypto` + `expo-secure-store` (WorkOS does not ship an official React Native SDK); refresh token in SecureStore
 - **Tamagui** + **Lucide** — UI primitives and icons
 - **React Hook Form** + **Zod** — forms with schema shared client/server
 - **Zustand** (with `persist`/MMKV) — client state
