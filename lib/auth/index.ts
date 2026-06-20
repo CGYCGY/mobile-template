@@ -1,12 +1,14 @@
-import { useEffect } from 'react';
+import { Buffer } from 'buffer';
 import * as WebBrowser from 'expo-web-browser';
-import { useAuthStore, type User } from '@/stores/auth';
+import { useEffect } from 'react';
 import { secureDelete, secureGet, secureSet } from '@/lib/storage';
+import { type User, useAuthStore } from '@/stores/auth';
 import {
+  type AuthTokens,
   clearTokens,
   getTokens,
   saveTokens,
-  type AuthTokens,
+  type WorkosUserPayload,
 } from './tokens';
 import { buildAuthorizeUrl, workosConfig } from './workos';
 
@@ -76,7 +78,7 @@ export async function completeSignIn({
     await secureDelete(PKCE_VERIFIER_KEY);
     await secureDelete(PKCE_STATE_KEY);
 
-    const user = await fetchWorkosUser(tokens.accessToken);
+    const user = await userFromTokens(tokens);
     setUser(user);
   } finally {
     setLoading(false);
@@ -100,7 +102,19 @@ export async function signOut(): Promise<void> {
   }
 }
 
-export async function refreshAccessToken(): Promise<AuthTokens | null> {
+// Single-flight: bootstrap and the Convex auth bridge can both ask for a refresh
+// at once; without this they race two POSTs and one clobbers the other's tokens.
+let refreshInflight: Promise<AuthTokens | null> | null = null;
+
+export function refreshAccessToken(): Promise<AuthTokens | null> {
+  if (refreshInflight) return refreshInflight;
+  refreshInflight = doRefresh().finally(() => {
+    refreshInflight = null;
+  });
+  return refreshInflight;
+}
+
+async function doRefresh(): Promise<AuthTokens | null> {
   const tokens = await getTokens();
   if (!tokens?.refreshToken) return null;
 
@@ -117,8 +131,22 @@ export async function refreshAccessToken(): Promise<AuthTokens | null> {
   });
 
   if (!response.ok) {
-    await clearTokens();
-    return null;
+    // Only wipe tokens on a definitive "session revoked" response. 429/5xx or
+    // network errors are transient — throwing lets callers retry without
+    // destroying a still-valid refresh token (e.g. offline / flaky network).
+    if (response.status === 400 || response.status === 401) {
+      let payload: { error?: string } = {};
+      try {
+        payload = (await response.json()) as { error?: string };
+      } catch {
+        // ignore parse failure — treat as non-definitive
+      }
+      if (payload.error === 'invalid_grant') {
+        await clearTokens();
+        return null;
+      }
+    }
+    throw new Error(`Token refresh failed: ${response.status}`);
   }
 
   const json = (await response.json()) as WorkosTokenResponse;
@@ -127,6 +155,7 @@ export async function refreshAccessToken(): Promise<AuthTokens | null> {
     refreshToken: json.refresh_token ?? tokens.refreshToken,
     idToken: json.id_token ?? tokens.idToken,
     expiresAt: computeExpiresAt(json.expires_in),
+    user: json.user ?? tokens.user,
   };
   await saveTokens(next);
   return next;
@@ -149,16 +178,29 @@ export function useAuthBootstrap(): void {
         }
 
         if (isExpired(tokens.expiresAt)) {
-          tokens = await refreshAccessToken();
-          if (!tokens) {
+          const staleTokens = tokens;
+          let refreshed: AuthTokens | null = null;
+          try {
+            refreshed = await refreshAccessToken();
+          } catch {
+            // Transient error (network/5xx/429): reuse the stale stored user so
+            // the app stays usable offline; the next API call re-triggers refresh.
+            const user = await userFromTokens(staleTokens);
+            if (!cancelled) setUser(user);
+            return;
+          }
+          if (!refreshed) {
+            // refreshAccessToken returns null only on invalid_grant — session revoked.
             if (!cancelled) setUser(null);
             return;
           }
+          tokens = refreshed;
         }
 
-        const user = await fetchWorkosUser(tokens.accessToken);
+        const user = await userFromTokens(tokens);
         if (!cancelled) setUser(user);
       } catch {
+        // Unexpected error (e.g. corrupt stored tokens); treat as no session.
         if (!cancelled) setUser(null);
       } finally {
         if (!cancelled) setLoading(false);
@@ -175,16 +217,8 @@ type WorkosTokenResponse = {
   access_token: string;
   refresh_token?: string;
   id_token?: string;
-  expires_in: number;
+  expires_in?: number;
   user?: WorkosUserPayload;
-};
-
-type WorkosUserPayload = {
-  id: string;
-  email: string;
-  first_name?: string | null;
-  last_name?: string | null;
-  profile_picture_url?: string | null;
 };
 
 async function exchangeCodeForTokens(input: {
@@ -211,25 +245,37 @@ async function exchangeCodeForTokens(input: {
   }
 
   const json = (await response.json()) as WorkosTokenResponse;
+  // Embed the user payload from the exchange response so sign-in doesn't need a
+  // second round-trip to resolve the current user.
   return {
     accessToken: json.access_token,
     refreshToken: json.refresh_token ?? '',
     idToken: json.id_token,
     expiresAt: computeExpiresAt(json.expires_in),
+    user: json.user,
   };
 }
 
-async function fetchWorkosUser(accessToken: string): Promise<User> {
-  const response = await fetch(
-    `${workosConfig.baseUrl}/user_management/users/me`,
-    {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`Failed to load user: ${response.status}`);
-  }
-  const payload = (await response.json()) as WorkosUserPayload;
+type IdTokenClaims = {
+  sub: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  picture?: string;
+};
+
+function decodeIdToken(idToken: string): IdTokenClaims {
+  const parts = idToken.split('.');
+  if (parts.length !== 3) throw new Error('Invalid id_token format');
+  const payload = parts[1];
+  if (!payload) throw new Error('Invalid id_token format');
+  const padded = payload + '='.repeat((4 - (payload.length % 4)) % 4);
+  const base64 = padded.replace(/-/g, '+').replace(/_/g, '/');
+  const json = Buffer.from(base64, 'base64').toString('utf8');
+  return JSON.parse(json) as IdTokenClaims;
+}
+
+function userFromWorkosPayload(payload: WorkosUserPayload): User {
   const name = [payload.first_name, payload.last_name]
     .filter(Boolean)
     .join(' ')
@@ -243,9 +289,48 @@ async function fetchWorkosUser(accessToken: string): Promise<User> {
   };
 }
 
-function computeExpiresAt(expiresInSeconds: number): number {
+// Resolve the current user without a network call when possible: prefer the
+// embedded payload, then the self-contained id_token claims, and only fall back
+// to a /users/me fetch when neither is present.
+async function userFromTokens(tokens: AuthTokens): Promise<User> {
+  if (tokens.user) {
+    return userFromWorkosPayload(tokens.user);
+  }
+  if (tokens.idToken) {
+    const claims = decodeIdToken(tokens.idToken);
+    const name = [claims.first_name, claims.last_name]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return {
+      id: claims.sub,
+      email: claims.email,
+      name: name || claims.email,
+      displayName: name || undefined,
+      avatarUrl: claims.picture ?? undefined,
+    };
+  }
+  return fetchWorkosUser(tokens.accessToken);
+}
+
+async function fetchWorkosUser(accessToken: string): Promise<User> {
+  const response = await fetch(
+    `${workosConfig.baseUrl}/user_management/users/me`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to load user: ${response.status}`);
+  }
+  const payload = (await response.json()) as WorkosUserPayload;
+  return userFromWorkosPayload(payload);
+}
+
+function computeExpiresAt(expiresInSeconds: number | undefined): number {
+  const seconds = expiresInSeconds ?? 3600;
   const skewMs = 30_000;
-  return Date.now() + expiresInSeconds * 1000 - skewMs;
+  return Date.now() + seconds * 1000 - skewMs;
 }
 
 function isExpired(expiresAt: number): boolean {
@@ -258,5 +343,5 @@ function parseCallbackUrl(url: string): URLSearchParams {
   return new URLSearchParams(url.slice(queryIndex + 1));
 }
 
-export { getTokens, clearTokens, saveTokens };
 export type { AuthTokens };
+export { clearTokens, getTokens, saveTokens };

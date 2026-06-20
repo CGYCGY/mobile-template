@@ -1,55 +1,42 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useAuthStore } from '@/stores/auth';
-import {
-  getTokens,
-  refreshAccessToken,
-} from '@/lib/auth';
-import { convexClient } from './client';
+import { getTokens, refreshAccessToken } from '@/lib/auth';
 
-export function useConvexAuthBridge(): void {
-  const user = useAuthStore((s) => s.user);
-  const fetcher = useFetchConvexAccessToken();
+// Dual-flight, keyed by mode: a forceRefreshToken:true call must NOT reuse a
+// non-forced in-flight read, or a forced refresh hands back the same expired
+// token Convex just rejected. The underlying refreshAccessToken is itself
+// single-flighted, so concurrent forced callers still share one network refresh.
+let inflightForced: Promise<string | null> | null = null;
+let inflightRead: Promise<string | null> | null = null;
 
-  useEffect(() => {
-    if (!user) {
-      convexClient.clearAuth();
-      return;
-    }
-    convexClient.setAuth(fetcher);
-  }, [user, fetcher]);
-}
-
-function useFetchConvexAccessToken(): (args: {
+export async function fetchConvexAccessToken({
+  forceRefreshToken,
+}: {
   forceRefreshToken: boolean;
-}) => Promise<string | null> {
-  const inflight = useRef<Promise<string | null> | null>(null);
-
-  return useCallback(async ({ forceRefreshToken }) => {
-    if (inflight.current) return inflight.current;
-
-    const task = (async () => {
-      if (forceRefreshToken) {
-        const next = await refreshAccessToken();
-        return next?.accessToken ?? null;
-      }
-      const tokens = await getTokens();
-      if (!tokens) return null;
-      if (Date.now() >= tokens.expiresAt) {
-        const next = await refreshAccessToken();
-        return next?.accessToken ?? null;
-      }
-      return tokens.accessToken;
-    })();
-
-    inflight.current = task;
+}): Promise<string | null> {
+  if (forceRefreshToken) {
+    if (inflightForced) return inflightForced;
+    const task = refreshAccessToken().then((next) => next?.accessToken ?? null);
+    inflightForced = task;
     try {
       return await task;
     } finally {
-      inflight.current = null;
+      inflightForced = null;
     }
-  }, []);
-}
+  }
 
-export function useConvexClient() {
-  return useMemo(() => convexClient, []);
+  if (inflightRead) return inflightRead;
+  const task = (async () => {
+    const tokens = await getTokens();
+    if (!tokens) return null;
+    if (Date.now() >= tokens.expiresAt) {
+      const next = await refreshAccessToken();
+      return next?.accessToken ?? null;
+    }
+    return tokens.accessToken;
+  })();
+  inflightRead = task;
+  try {
+    return await task;
+  } finally {
+    inflightRead = null;
+  }
 }

@@ -1,10 +1,8 @@
 import { Redirect, Tabs } from 'expo-router';
 import { Home, Settings } from '@/components/icons';
-import { useConvexAuthBridge } from '@/lib/convex';
 import { useAuthStore } from '@/stores';
 
 export default function TabsLayout() {
-  useConvexAuthBridge();
   const user = useAuthStore((s) => s.user);
 
   if (!user) {

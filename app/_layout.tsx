@@ -1,6 +1,6 @@
 import '@/lib/sentry';
 
-import { ConvexProvider } from 'convex/react';
+import { ConvexProviderWithAuth } from 'convex/react';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -9,7 +9,7 @@ import { Component, type ReactNode, useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { TamaguiProvider } from 'tamagui';
-import { convexClient } from '@/lib/convex';
+import { convexClient, useAuth } from '@/lib/convex';
 import { PostHogProvider, postHogProviderProps } from '@/lib/posthog';
 import { Sentry } from '@/lib/sentry';
 import tamaguiConfig from '@/tamagui.config';
@@ -59,7 +59,7 @@ function RootLayout() {
     <RootErrorBoundary>
       <PostHogProvider {...postHogProviderProps}>
         <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
-          <ConvexProvider client={convexClient}>
+          <ConvexProviderWithAuth client={convexClient} useAuth={useAuth}>
             {/* testID is the e2e harness's "app rendered" signal: it appears only
                 past the fonts/splash gate and drops during a JS reload, which the
                 native activity (identical while bundling/reloading) cannot show. */}
@@ -74,7 +74,7 @@ function RootLayout() {
                 </Stack>
               </SafeAreaProvider>
             </GestureHandlerRootView>
-          </ConvexProvider>
+          </ConvexProviderWithAuth>
         </TamaguiProvider>
       </PostHogProvider>
     </RootErrorBoundary>
