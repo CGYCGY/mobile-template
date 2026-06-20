@@ -59,20 +59,23 @@ This list is for the reviewer, not the author. Each item is phrased as a questio
 
 ### Observability (Sentry + PostHog)
 
-- [ ] Is `Sentry.init({...})` at module scope in `app/_layout.tsx`, not in a hook or lazy helper?
+- [ ] Is `Sentry.init({...})` at module scope (in `lib/sentry.ts`, imported on the first line of `app/_layout.tsx`), not in a hook or lazy helper?
 - [ ] Is the default export `Sentry.wrap(RootLayout)`?
-- [ ] Is `Sentry.reactNavigationIntegration({...})` present in `integrations`?
-- [ ] Is `RootErrorBoundary` the outermost component in `RootLayout`'s return?
+- [ ] Is `Sentry.expoRouterIntegration()` present in `integrations` (not `reactNavigationIntegration`)?
+- [ ] Is the DSN read as `EXPO_PUBLIC_SENTRY_DSN` (not unprefixed `SENTRY_DSN`)?
+- [ ] Is `RootErrorBoundary` the outermost component in `RootLayout`'s return, with a fallback that uses **raw RN primitives + hex** (no Tamagui)?
 - [ ] Does every new `catch` block call `log.error(...)` / `Sentry.captureException(...)` OR include a `// ignore: <reason>` comment as the first line?
 - [ ] Any new `console.log` / `console.warn` / `console.error` outside `lib/log.ts`?
-- [ ] Only one `PostHogProvider`, mounted in `app/_layout.tsx`, with `captureScreens: false`?
+- [ ] Only one `PostHogProvider`, mounted in `app/_layout.tsx`, with `captureScreens: false`, and `<PostHogInstrumentation/>` mounted once inside it (handling screen/identify/reset)?
 
 ### Auth
 
 - [ ] Any `Math.random()` used for nonces, state, or PKCE verifiers? (Must be `expo-crypto` or `react-native-quick-crypto`.)
-- [ ] Is `useConvexAuthBridge` (or equivalent token bridge) mounted **after** auth — inside the authenticated route group — rather than in `_layout.tsx`?
+- [ ] Is Convex auth driven by the root `ConvexProviderWithAuth` + `useAuth()` only — with **no** `useConvexAuthBridge`/`convexClient.setAuth(...)` reintroduced in a layout or screen?
+- [ ] Are tokens written via the **split** SecureStore keys (access/refresh/id/meta), not one JSON blob?
+- [ ] Does `refreshAccessToken` clear tokens only on `invalid_grant` (and throw on 429/5xx/network), preserving tokens offline?
 - [ ] Are tokens kept out of Zustand (only the user profile is persisted, and `partialize` enforces it)?
-- [ ] Does the sign-out path clear all four: Sentry user, PostHog reset, SecureStore tokens, and the auth Zustand store?
+- [ ] Does the sign-out path clear: SecureStore tokens and the auth Zustand store (PostHog reset / Sentry user are handled by `PostHogInstrumentation` / your session helper)?
 
 ### Tooling
 

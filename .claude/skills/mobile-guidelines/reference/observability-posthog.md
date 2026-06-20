@@ -1,47 +1,41 @@
 ---
 name: observability-posthog
-description: PostHog wiring for this codebase - one SDK-managed instance via PostHogProvider, usePostHog() in consumers, manual posthog.screen() because autocapture is broken on Expo Router 6 / React Navigation 7, identify/reset on auth lifecycle, MMKV custom storage.
+description: PostHog wiring for this codebase - one SDK-managed instance via PostHogProvider, usePostHog() in consumers, the PostHogInstrumentation component for manual screen()/identify()/reset() driven by usePathname and the auth store, captureScreens false for control.
 ---
 
 # Observability: PostHog
 
 ## Purpose
 
-PostHog is the product analytics pipeline. There is exactly one PostHog instance per app session and the SDK owns it - the `<PostHogProvider>` at the root creates it, and every consumer reads it via `usePostHog()`. There is no standalone `posthog` instance file. Screen tracking is manual because autocapture's screen detection is broken on the Expo Router 6 / React Navigation 7 stack this codebase uses - the provider opts out with `captureScreens: false` and route layouts call `posthog.screen(name, props)` from an effect. Identify and reset are tied directly to the auth lifecycle so anonymous sessions never inherit the previous user's distinct_id.
+PostHog is the product analytics pipeline. There is exactly one PostHog instance per app session and the SDK owns it - the `<PostHogProvider>` at the root creates it (props in `postHogProviderProps`, `lib/posthog.ts`), and every consumer reads it via `usePostHog()`. There is no standalone `posthog` instance file. Screen, identify, and reset are centralized in a single `PostHogInstrumentation` component mounted inside the provider: it fires `posthog.screen(pathname)` on every route change (via `usePathname`), `posthog.identify(user.id)` on sign-in, and `posthog.reset()` on sign-out. `captureScreens` is **false** by choice — screen tracking is done manually via `usePathname` for control over event names. Identify/reset are tied to the auth store so anonymous sessions never inherit the previous user's distinct_id (the bleed problem on a shared device).
 
 ## Patterns
 
 ### 1. Single SDK-managed instance via `<PostHogProvider>` at the root
 
-The provider goes in `app/_layout.tsx`, above every other provider that might want to capture events.
+The provider props live in `lib/posthog.ts` as `postHogProviderProps`; `app/_layout.tsx` spreads them onto `<PostHogProvider>`, above every other provider that might want to capture events.
+
+```ts
+// lib/posthog.ts
+export const postHogProviderProps = {
+  apiKey: env.EXPO_PUBLIC_POSTHOG_KEY,
+  options: {
+    host: env.EXPO_PUBLIC_POSTHOG_HOST,
+    captureAppLifecycleEvents: true,
+    captureScreens: false,
+  },
+} as const;
+```
 
 ```tsx
 // app/_layout.tsx
-import { PostHogProvider } from 'posthog-react-native';
-import { env } from '@/env';
-import { posthogStorage } from '@/lib/posthog';
-
-function RootLayout() {
-  return (
-    <PostHogProvider
-      apiKey={env.EXPO_PUBLIC_POSTHOG_KEY}
-      options={{
-        host: env.EXPO_PUBLIC_POSTHOG_HOST,
-        captureAppLifecycleEvents: true,
-        captureScreens: false,
-        persistence: 'customStorage',
-        customStorage: posthogStorage,
-      }}
-    >
-      {/* TamaguiProvider, ConvexProvider, Stack ... */}
-    </PostHogProvider>
-  );
-}
-
-export default Sentry.wrap(RootLayout);
+<PostHogProvider {...postHogProviderProps}>
+  <PostHogInstrumentation />
+  {/* TamaguiProvider, ConvexProviderWithAuth, Stack ... */}
+</PostHogProvider>
 ```
 
-`captureAppLifecycleEvents` lives on `options`, not on `autocapture`. `captureScreens: false` is mandatory on Expo Router 6 / React Navigation 7 - the autocapture screen hook reads the legacy navigation tree and either no-ops or misnames screens.
+`captureAppLifecycleEvents` lives on `options`, not on `autocapture`. `captureScreens` is **false** by choice: screens are tracked manually through `PostHogInstrumentation` (below) so the event name is a controlled value (`usePathname()`), not whatever autocapture infers.
 
 ### 2. Consumers read the instance via `usePostHog()`
 
@@ -59,74 +53,61 @@ export default function CheckoutScreen() {
 }
 ```
 
-### 3. Manual screen tracking via `posthog.screen(name)`
+### 3. `PostHogInstrumentation` — screen + identify + reset in one component
 
-Each route fires `posthog.screen(name, props)` from an effect. The name is `verb_object` or PascalCase product-name - pick one convention across the codebase and stay consistent.
+Screen tracking, identify, and reset are not sprinkled across route effects — they live in one component mounted inside the provider. It reads `usePathname()` for the route and `useAuthStore((s) => s.user)` for identity.
 
 ```tsx
-// app/(tabs)/product/[id].tsx
-import { useEffect } from 'react';
-import { usePostHog } from 'posthog-react-native';
-import { useLocalSearchParams } from 'expo-router';
-
-export default function ProductScreen() {
+// lib/posthog.ts
+export function PostHogInstrumentation() {
   const posthog = usePostHog();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const pathname = usePathname();
+  const user = useAuthStore((s) => s.user);
+  const identifiedId = useRef<string | null>(null);
 
   useEffect(() => {
-    posthog?.screen('Product', { id });
-  }, [posthog, id]);
+    if (pathname) posthog.screen(pathname);
+  }, [posthog, pathname]);
 
-  return /* ... */;
+  useEffect(() => {
+    if (user) {
+      if (identifiedId.current !== user.id) {
+        posthog.identify(user.id, { email: user.email });
+        identifiedId.current = user.id;
+      }
+    } else if (identifiedId.current !== null) {
+      posthog.reset();
+      identifiedId.current = null;
+    }
+  }, [posthog, user]);
+
+  return null;
 }
 ```
 
-For shared shells, the easiest pattern is a tiny `useScreenTracking(name, props)` hook in `lib/` that wraps the effect.
+The `identifiedId` ref makes both effects idempotent — `identify` fires once per distinct user id, and `reset` fires once on the sign-in → sign-out transition (not on every `user`-null render). Mount it exactly once, as a child of `<PostHogProvider>`.
 
-### 4. `identify` after auth, `reset` on sign-out
+### 4. Identity rules: id not email, always reset on sign-out
 
-Identify ties events to the stable user id - never the email. Reset on sign-out clears `distinct_id` so the next anonymous user is fresh.
+`identify` ties events to the **stable user id**; email is passed only as a property because emails change (typo fixes, marriage) and would orphan the profile. `reset` on sign-out clears `distinct_id` — without it, the next anonymous user on a shared device inherits the previous user's id and their events alias to the wrong person. Both rules are already enforced by the `PostHogInstrumentation` effects above; ad-hoc `identify`/`reset` calls elsewhere are unnecessary and risk drift.
 
-```ts
-// lib/auth/session.ts (sketch)
-import type { PostHog } from 'posthog-react-native';
+### 5. Ad-hoc events via `usePostHog()`
 
-export async function onSignedIn(posthog: PostHog | undefined, user: { id: string; email: string }) {
-  posthog?.identify(user.id, { email: user.email });
-}
+Non-screen product events are captured directly from a component with `usePostHog()` — there is no standalone `posthog` constant to import and no custom MMKV storage adapter; the SDK manages its own persistence.
 
-export async function onSignedOut(posthog: PostHog | undefined) {
-  await posthog?.flush();
-  posthog?.reset();
-}
-```
-
-The call site lives in a component or hook where `usePostHog()` is available; the helpers stay pure.
-
-### 5. MMKV custom storage adapter
-
-The codebase already standardizes on MMKV (see `lib/storage`). Point PostHog at the same store so its event queue persists across cold starts without a second key-value backend. Both `persistence: 'customStorage'` and `customStorage: { getItem, setItem, removeItem }` are required - the SDK silently falls back to its default file persistence if `persistence` is missing.
-
-```ts
-// lib/posthog.ts (target shape)
-import { storage } from '@/lib/storage';
-
-export const posthogStorage = {
-  getItem: (key: string) => storage.getString(key) ?? null,
-  setItem: (key: string, value: string) => storage.set(key, value),
-  removeItem: (key: string) => storage.delete(key),
-};
-
-export { PostHogProvider } from 'posthog-react-native';
+```tsx
+const posthog = usePostHog();
+<Button onPress={() => posthog?.capture('checkout_started', { plan: 'pro' })} />
 ```
 
 ## Anti-Patterns
 
-- **Standalone `posthog` instance plus provider re-export (dual source of truth).** `lib/posthog.ts:4` constructs `new PostHog(env.EXPO_PUBLIC_POSTHOG_KEY, {...})` AND `lib/posthog.ts:27` re-exports `PostHogProvider`. That means the bundle has two PostHog instances at runtime - the one in `lib/posthog.ts` (used by the `track()` helper at `lib/posthog.ts:20`) and the one the provider creates internally. Events split between them, identify only applies to one, and `reset()` only clears one. Reconcile: delete the `new PostHog(...)` constructor and the `track()` helper, keep only the storage adapter and the `PostHogProvider` re-export, and migrate callers to `usePostHog()`.
-- **`autocapture: true` in the provider props.** `lib/posthog.ts:17` sets `autocapture: true` in `postHogProviderProps`. On Expo Router 6 / React Navigation 7 this either no-ops or emits screen events with the wrong name. Replace with `options.captureScreens: false` and add manual `posthog.screen(...)` calls in route effects.
-- **`captureAppLifecycleEvents` under `autocapture`.** This is a silent no-op - it belongs under `options`. The autocapture key namespace only knows `captureScreens`, `captureTouches`, `captureLifecycleEvents` (different key), `ignoreLabels`.
-- **`identify(user.email)`.** Email changes (typo fixes, marriage) orphan the profile. Always identify by the stable auth id and pass email as a property.
-- **Missing `reset()` on sign-out.** Next anonymous session inherits the previous distinct_id - events alias to the wrong user.
+- **Standalone `posthog` instance in `lib/`.** Do not `new PostHog(...)` in a `lib/` file alongside the provider — that creates two instances at runtime, splits events, and means `identify`/`reset` only apply to one. The provider-created instance reached via `usePostHog()` (and the `PostHogInstrumentation` component) is the single source of truth.
+- **Re-implementing screen/identify/reset in route effects.** That logic lives in `PostHogInstrumentation`. Duplicating it double-fires `screen()` and races the identify ref.
+- **`autocapture`-based screen tracking.** `captureScreens` is intentionally `false`; screens come from `usePathname()` in `PostHogInstrumentation`. Do not flip `captureScreens: true` or add an `autocapture` block.
+- **`captureAppLifecycleEvents` under `autocapture`.** It belongs under `options` (as in `postHogProviderProps`). Nested under `autocapture` it is a silent no-op.
+- **`identify(user.email)`.** Always identify by the stable auth id and pass email as a property.
+- **Missing `reset()` on sign-out.** Next anonymous session inherits the previous distinct_id — events alias to the wrong user. (Handled by the component; don't bypass it.)
 - **`capture()` immediately followed by `Updates.reloadAsync()` without `await posthog.flush()`.** RN batches events; an in-flight capture is dropped if the bundle reloads before the next flush window.
 
 ## Decision Rationale
@@ -134,6 +115,5 @@ export { PostHogProvider } from 'posthog-react-native';
 See `../decisions.md` for:
 
 - Why the SDK-managed instance is the single source of truth (no standalone `posthog` constant in `lib/`)
-- Why `captureScreens: false` is mandatory on Expo Router 6 / React Navigation 7 and the manual `posthog.screen` pattern
-- Why MMKV is the persistence backend instead of AsyncStorage
-- Why `identify` lives in the auth session module instead of being sprinkled into route effects
+- Why `captureScreens: false` plus the `PostHogInstrumentation` (`usePathname`-driven) pattern is preferred for controlled screen names
+- Why identify/reset are centralized in one component wired to the auth store rather than sprinkled into route effects

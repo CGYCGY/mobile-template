@@ -13,12 +13,12 @@ Enforces comprehensive mobile development standards for this codebase. Covers ro
 
 **Pattern:** Layered, file-based routing
 **Language:** TypeScript (strict + `noUncheckedIndexedAccess`)
-**Runtime:** React Native + Expo SDK (New Architecture)
-**Router:** Expo Router v6 (`typedRoutes` enabled)
+**Runtime:** React Native 0.85 + Expo SDK 56 + React 19.2 (New Architecture)
+**Router:** Expo Router (`typedRoutes` enabled) — auto-registers its navigation ref
 **UI:** Tamagui (single styling source) + Lucide via `@/components/icons`
 **State:** Zustand v5 + MMKV `persist` (user-state only — tokens in SecureStore)
 **Backend:** Convex (query / mutation / action) — replaces ORM + REST controller layer
-**Auth:** WorkOS via PKCE (`lib/auth/`), tokens in SecureStore, Convex JWT bridge mounted post-auth
+**Auth:** WorkOS via PKCE (`lib/auth/`), tokens in SecureStore (split keys), Convex JWT via root `ConvexProviderWithAuth` + `useAuth()`
 **Observability:** Sentry (`@sentry/react-native`) + PostHog (`posthog-react-native`)
 **Tooling:** Bun · Biome · Lefthook · Jest · Maestro · `just`
 
@@ -48,7 +48,7 @@ Progressive loading — only read what the current task needs.
 **State, storage, auth**
 - `reference/state-zustand.md` — typed `create<T>()`, MMKV `persist`, `partialize`
 - `reference/storage-and-crypto.md` — SecureStore vs MMKV decision matrix, quick-crypto
-- `reference/auth-workos-pkce.md` — sign-in/refresh/sign-out and the Convex bridge
+- `reference/auth-workos-pkce.md` — sign-in/refresh/sign-out and the root Convex auth provider
 
 **Backend**
 - `reference/convex-patterns.md` — args shorthand, returns validator, indexes, auth guard
@@ -79,8 +79,8 @@ Locked decisions are recorded in `decisions.md`. Read it before debating a patte
 - Mobile imports only from `@/convex/_generated/api` — never `convex/<feature>.ts`.
 - Run `bunx convex codegen` before `tsc`. No `as FunctionReference<...>` casts.
 - Sentry init at module scope. `Sentry.wrap(RootLayout)` on the default export.
-- PostHog: single provider-managed instance. `captureScreens: false`. Manual `posthog.screen()`.
-- `useConvexAuthBridge` mounted in `(tabs)/_layout.tsx` (post-auth), not in `app/_layout.tsx`.
+- PostHog: single provider-managed instance. `captureScreens: false`. `<PostHogInstrumentation/>` handles `screen()`/`identify()`/`reset()`.
+- Convex auth via root `ConvexProviderWithAuth` + `useAuth()`. No `useConvexAuthBridge` — root-mount is safe (fetcher fires only when `isAuthenticated`).
 - Tamagui tokens only. No `StyleSheet.create`, no raw hex, no raw px on layout props.
 - `<Redirect>` for auth gates. Never `router.replace` during render.
 
@@ -129,8 +129,8 @@ just e2e            # wraps: maestro test .maestro/
 | Navigation transition | `<Link>` in JSX; `router.push/replace` only in handlers/effects |
 | Icon | Re-exported from `@/components/icons` (never direct from `lucide-react-native`) |
 | Provider mount | Root layout only; never in screens |
-| Sentry init | Module scope at top of `app/_layout.tsx` |
-| PostHog screen tracking | Manual `posthog.screen(name)` — `captureScreens: false` |
+| Sentry init | Module scope in `lib/sentry.ts`, imported first by `app/_layout.tsx` |
+| PostHog screen tracking | `<PostHogInstrumentation/>` (usePathname-driven) — `captureScreens: false` |
 | Convex function | `args:` shorthand · `returns:` validator · auth guard · `withIndex` |
 | Convex import | Only from `@/convex/_generated/api` |
 

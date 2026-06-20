@@ -7,9 +7,9 @@ description: Storage and crypto primitives for this codebase — SecureStore for
 
 ## Purpose
 
-Three primitives, three jobs. Auth tokens and other SecureStore-class secrets live in the iOS Keychain / Android Keystore via `expo-secure-store`. User preferences, Zustand persistence, and cached non-sensitive data live in MMKV via a JSI-backed singleton. Cryptographic primitives — PKCE verifiers, random `state` values, hashing in hot paths — come from `react-native-quick-crypto`, which is sync and free of bridge overhead. `Math.random()` is never acceptable for security-relevant values; `AsyncStorage` is never used in new code.
+Three primitives, three jobs. Auth tokens and other SecureStore-class secrets live in the iOS Keychain / Android Keystore via `expo-secure-store`. User preferences, Zustand persistence, and cached non-sensitive data live in MMKV (v4, JSI-backed via `react-native-nitro-modules`) through a module-load singleton. Cryptographic primitives — PKCE verifiers, random `state` values, hashing in hot paths — come from `react-native-quick-crypto` (v1), which is sync and free of bridge overhead. `Math.random()` is never acceptable for security-relevant values; `AsyncStorage` is never used in new code.
 
-This codebase already has a canonical violation of the `Math.random()` rule in `lib/auth/workos.ts` — see Anti-Patterns below.
+The `Math.random()` rule is enforced in `lib/auth/` today: both the PKCE verifier (`pkce.ts`) and the OAuth `state` (`workos.ts` → `cryptoRandomState()`) come from `QuickCrypto.randomBytes(...)`.
 
 ## Patterns
 
@@ -36,10 +36,12 @@ This codebase already has a canonical violation of the `Math.random()` rule in `
 
 ```ts
 // lib/storage/mmkv.ts
-import { MMKV } from 'react-native-mmkv';
+import { createMMKV } from 'react-native-mmkv';
 import type { StateStorage } from 'zustand/middleware';
 
-export const storage = new MMKV({ id: 'mobile-template' });
+// MMKV v4: instances come from the createMMKV() factory (v3 was `new MMKV()`),
+// and it's nitro-backed (requires react-native-nitro-modules).
+export const storage = createMMKV({ id: 'mobile-template' });
 
 export const mmkvStorage: StateStorage = {
   getItem: (name) => {
@@ -50,7 +52,7 @@ export const mmkvStorage: StateStorage = {
     storage.set(name, value);
   },
   removeItem: (name) => {
-    storage.delete(name);
+    storage.remove(name); // v4 renamed v3's `delete` to `remove`
   },
 };
 ```
@@ -116,12 +118,12 @@ The same primitive must be used for the OAuth `state` parameter — see `auth-wo
 
 ## Anti-Patterns
 
-- `lib/auth/workos.ts:49-53` — `cryptoRandomState()` uses `Math.random().toString(36)` to build the OAuth `state` value. `Math.random()` is a non-cryptographic PRNG; an attacker who can predict it can forge a callback that passes the CSRF check. Replace with `QuickCrypto.randomBytes(16).toString('hex')`.
+- Building the OAuth `state` from `Math.random().toString(36)` (or any non-crypto PRNG). `cryptoRandomState()` in `lib/auth/workos.ts` correctly uses `QuickCrypto.randomBytes(16)` today; reverting it to `Math.random()` would let an attacker predict the value and forge a callback that passes the CSRF check.
 - Putting a JWT or refresh token into MMKV (or `AsyncStorage`, or Zustand persist). MMKV stores cleartext on disk by default. Tokens go through `lib/auth/tokens.ts` → SecureStore only.
 - `AsyncStorage` anywhere in new code. It's an async bridge call per read; MMKV is sync via JSI. Existing dependencies on `@react-native-async-storage/async-storage` should be migrated.
 - `await storage.getString(key)` — MMKV is sync; the `await` resolves a non-thenable and returns `undefined` on the next tick, which is almost always a bug.
-- Stuffing >2 KB into a single SecureStore key (large user profiles, cached responses). iOS Keychain has practical limits and behavior is unreliable. Tokens stay in SecureStore, profile data goes to MMKV (or remote).
-- Recreating `new MMKV()` per call instead of importing the `storage` singleton from `lib/storage/mmkv.ts`. Cheap but wasteful and breaks the single-namespace assumption.
+- Stuffing >2 KB into a single SecureStore key. `expo-secure-store` has a ~2048-byte per-item limit and an over-limit write can fail **silently** — leaving a stale or half-written entry. This is exactly why `lib/auth/tokens.ts` splits access / refresh / id / meta across separate keys instead of one JSON blob (two JWTs + the user payload blow past the limit). Large profile/cache data goes to MMKV (or remote), never one fat SecureStore key.
+- Recreating `createMMKV()` per call instead of importing the `storage` singleton from `lib/storage/mmkv.ts`. Cheap but wasteful and breaks the single-namespace assumption. (Also: it's `createMMKV()` in v4, not `new MMKV()`.)
 - Reaching for `expo-crypto` in the PKCE path. The codebase already depends on `react-native-quick-crypto`; its sync API is the right choice on the auth hot path. Reserve `expo-crypto` for cases where async fits naturally (e.g. one-shot `digestStringAsync` outside a render).
 - Storing an object in MMKV without serializing: `storage.set('user', { id: '1' })` writes the string `"[object Object]"`. Use `JSON.stringify` / `JSON.parse`, or go through the Zustand `mmkvStorage` adapter which handles it via `createJSONStorage`.
 

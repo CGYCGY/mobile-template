@@ -64,25 +64,15 @@ export default function TabsLayout() {
 - ✓ **Selector form of Zustand** — `useAuthStore((s) => s.user)` avoids re-renders when other store slices change.
 - ✓ **Icons routed via `@/components/icons`** — never imported directly from `lucide-react-native`. Keeps the import surface swappable.
 
-## What's missing (and should be added by downstream projects)
+## What these layouts do NOT need
 
-- 🔧 **`useConvexAuthBridge()` should be called at the top of `TabsLayout`** (or any post-auth root). It pushes the WorkOS access token into the Convex client; without it, every authenticated Convex query/mutation will see `ctx.auth.getUserIdentity() === null`.
+- 🚫 **No Convex token-injection hook here.** Earlier guidance had you call `useConvexAuthBridge()` at the top of `TabsLayout`. That hook is **gone**: Convex auth is now driven by the root `ConvexProviderWithAuth` + `useAuth()` in `app/_layout.tsx`, which fetches a token only once `isAuthenticated` is true. An authenticated query/mutation already sees a non-null `ctx.auth.getUserIdentity()` without any per-layout wiring. Do not add a bridge here. See `decisions.md` → "Convex auth: root-mounted `ConvexProviderWithAuth`".
+- 🚫 **No `posthog.screen()` calls here.** Screen tracking is handled once by `<PostHogInstrumentation/>` at the root (driven by `usePathname`); per-screen calls would double-fire. See `reference/observability-posthog.md`.
 
-  ```tsx
-  // app/(tabs)/_layout.tsx — recommended addition
-  export default function TabsLayout() {
-    useConvexAuthBridge();          // ← add this
-    const user = useAuthStore((s) => s.user);
-    if (!user) return <Redirect href="/(auth)/sign-in" />;
-    // ...
-  }
-  ```
-
-  See `decisions.md` → "Convex useConvexAuthBridge mount point".
-
-- 🔧 **`posthog.screen()` calls** for manual screen tracking (since `captureScreens: false`). Add inside route-level `useEffect` or in each tab screen.
+These layouts therefore stay minimal — just the `<Redirect>` gate and the navigator.
 
 ## Anti-patterns to avoid
 
+- ❌ Re-adding a Convex bridge or `convexClient.setAuth(...)` call to a layout. Root `ConvexProviderWithAuth` already owns token fetch; a second driver double-drives the client.
 - ❌ `router.replace('/(auth)/sign-in')` inside the component body or a `useEffect` that runs every render. Use `<Redirect>` for declarative redirects; only use `router.replace` from event handlers (e.g., after a sign-out button press).
 - ❌ Reading multiple store slices at once (`const { user, theme } = useAuthStore()`) — causes unnecessary re-renders. Use one selector per slice.

@@ -1,50 +1,49 @@
 ---
 name: observability-sentry
-description: Sentry wiring for this codebase - module-scope init at the top of app/_layout.tsx, Sentry.wrap on the default export, reactNavigationIntegration for Expo Router 6 / React Navigation 7, breadcrumbs via lib/log.ts, and flush(2000) before any forced restart.
+description: Sentry wiring for this codebase - module-scope init in lib/sentry.ts (imported first by app/_layout.tsx), Sentry.wrap on the default export, expoRouterIntegration, EXPO_PUBLIC_SENTRY_DSN, breadcrumbs via lib/log.ts, and flush(2000) before any forced restart.
 ---
 
 # Observability: Sentry
 
 ## Purpose
 
-Sentry is the crash + error pipeline for this codebase. The SDK must be live before the first React component renders so that startup crashes, font-loading failures, and provider errors all reach Sentry. That means `Sentry.init(...)` is a module-scope side-effect at the top of `app/_layout.tsx`, never lazy and never inside a hook. The default export of the root layout is wrapped with `Sentry.wrap(...)` to capture touch breadcrumbs, the perf root span, and routing transactions through `reactNavigationIntegration` (the integration that works on Expo Router 6 / React Navigation 7). Sourcemaps upload during EAS Build via the `@sentry/react-native/expo` plugin - no manual upload step.
+Sentry is the crash + error pipeline for this codebase. The SDK must be live before the first React component renders so that startup crashes, font-loading failures, and provider errors all reach Sentry. That is achieved by putting `Sentry.init(...)` as a module-scope side-effect in `lib/sentry.ts`, which `app/_layout.tsx` imports on its very first line — never lazy and never inside a hook. The default export of the root layout is wrapped with `Sentry.wrap(...)` to capture touch breadcrumbs, the perf root span, and routing transactions through `expoRouterIntegration`. The DSN is read as `EXPO_PUBLIC_SENTRY_DSN` (DSNs are not secrets and must be `EXPO_PUBLIC_` to be inlined). Sourcemaps upload during EAS Build via the `@sentry/react-native/expo` plugin (Android Gradle plugin path) with `SENTRY_DISABLE_AUTO_UPLOAD` set per profile - no manual upload step.
 
 ## Patterns
 
-### 1. Module-scope init in the root layout
+### 1. Module-scope init, imported first by the root layout
 
-`Sentry.init` runs at module top level, before `RootLayout` is declared and before any provider mounts. Then the default export is `Sentry.wrap(RootLayout)`.
+`Sentry.init` runs at module top level in `lib/sentry.ts`. `app/_layout.tsx` imports that file on its **first line** (`import '@/lib/sentry';`), so init runs before `RootLayout` is declared and before any provider mounts. The default export is `Sentry.wrap(RootLayout)`.
+
+```ts
+// lib/sentry.ts
+import * as Sentry from '@sentry/react-native';
+import { env } from '@/env';
+
+if (env.EXPO_PUBLIC_SENTRY_DSN) {
+  Sentry.init({
+    dsn: env.EXPO_PUBLIC_SENTRY_DSN,
+    tracesSampleRate: 0.1,
+    profilesSampleRate: 0.1,
+    enableAutoSessionTracking: true,
+    // expoRouterIntegration auto-wires expo-router's navigationRef; unlike
+    // reactNavigationIntegration it needs no manually-registered ref.
+    integrations: [Sentry.expoRouterIntegration()],
+  });
+}
+
+export const wrap = Sentry.wrap;
+export { Sentry };
+```
 
 ```tsx
 // app/_layout.tsx
-import * as Sentry from '@sentry/react-native';
-import { Stack } from 'expo-router';
-import { env } from '@/env';
-
-Sentry.init({
-  dsn: env.EXPO_PUBLIC_SENTRY_DSN,
-  tracesSampleRate: __DEV__ ? 1.0 : 0.1,
-  enableNativeFramesTracking: !__DEV__,
-  integrations: [
-    Sentry.reactNavigationIntegration({ enableTimeToInitialDisplay: true }),
-  ],
-  beforeSend(event) {
-    if (event.user) {
-      delete event.user.email;
-      delete event.user.ip_address;
-    }
-    return event;
-  },
-});
-
-function RootLayout() {
-  return <Stack screenOptions={{ headerShown: false }} />;
-}
-
+import '@/lib/sentry';
+// ...
 export default Sentry.wrap(RootLayout);
 ```
 
-`reactNavigationIntegration()` covers both react-navigation and expo-router - it hooks the shared navigation container that Expo Router mounts under the hood. No separate `routingInstrumentation` constant is needed.
+`expoRouterIntegration()` is the chosen integration on this stack: expo-router (SDK 56) auto-registers its own navigation ref, so the integration hooks routing transactions and screen breadcrumbs with no manual ref wiring. The `init` is guarded on a truthy DSN — with no DSN the SDK is simply never started.
 
 ### 2. User context tied to the auth lifecycle
 
@@ -123,36 +122,42 @@ export async function applyUpdateAndRestart(): Promise<void> {
 }
 ```
 
-### 5. EAS sourcemap upload (no manual step)
+### 5. EAS sourcemap upload (Android Gradle plugin)
 
-`@sentry/react-native/expo` is listed in `app.config.ts` plugins, and `SENTRY_AUTH_TOKEN` is provided via EAS env. Sourcemaps upload automatically during `eas build`.
+`@sentry/react-native/expo` is listed in `app.config.ts` plugins with `experimental_android: { enableAndroidGradlePlugin: true }`. The default bundle-task hook can't parse Expo's `export:embed`-flavored task and skips the upload, so the Android Gradle plugin (AGP) integration uploads Hermes sourcemaps reliably instead. `SENTRY_AUTH_TOKEN` is provided via EAS env; `SENTRY_DISABLE_AUTO_UPLOAD: "true"` is set in every EAS build profile.
 
 ```ts
 // app.config.ts
 plugins: [
-  'expo-router',
-  'expo-notifications',
-  '@sentry/react-native/expo',
+  // ...
+  [
+    '@sentry/react-native/expo',
+    {
+      organization: process.env.SENTRY_ORG ?? 'your-sentry-org',
+      project: process.env.SENTRY_PROJECT ?? 'mobile-template',
+      experimental_android: { enableAndroidGradlePlugin: true },
+    },
+  ],
 ],
 ```
 
 ```json
-// eas.json
+// eas.json — every profile sets this
 {
   "build": {
     "production": {
-      "env": { "SENTRY_AUTH_TOKEN": "$SENTRY_AUTH_TOKEN" }
+      "env": { "SENTRY_DISABLE_AUTO_UPLOAD": "true" }
     }
   }
 }
 ```
 
-One-time setup: `eas secret:create --name SENTRY_AUTH_TOKEN --value $TOKEN`.
+One-time setup: `eas secret:create --name SENTRY_AUTH_TOKEN --value $TOKEN` (build-time only — `SENTRY_AUTH_TOKEN` stays unprefixed; it is never inlined into the client bundle).
 
 ## Anti-Patterns
 
-- **Lazy `initSentry()` helper called from inside the app.** `lib/sentry.ts:6` currently exports `function initSentry()` guarded by a module-level `initialized` flag, and no caller invokes it. That means Sentry never starts. Fix: delete the helper, move `Sentry.init({...})` to module scope at the top of `app/_layout.tsx`, and re-export `Sentry` from `lib/sentry.ts` only if other modules need it.
-- **Missing `reactNavigationIntegration` and `Sentry.wrap`.** `app/_layout.tsx:82` exports `Sentry.wrap(RootLayout)` but the init call is missing entirely (because of the lazy helper above). Without `reactNavigationIntegration` in `integrations`, routing transactions and screen breadcrumbs are lost on Expo Router 6 / React Navigation 7.
+- **Lazy `initSentry()` helper called from inside the app.** Init must be a module-scope side-effect in `lib/sentry.ts` (imported first by `app/_layout.tsx`). A helper guarded by an `initialized` flag that no caller invokes means Sentry never starts.
+- **Dropping `expoRouterIntegration` or `Sentry.wrap`.** The default export must stay `Sentry.wrap(RootLayout)`, and `expoRouterIntegration()` must stay in `integrations` — without it, routing transactions and screen breadcrumbs are lost. Do not swap it back to `reactNavigationIntegration` (that requires a manually-registered nav ref this app no longer wires).
 - **Silent catches.** `lib/log.ts:31` has a `// ignore` comment - that is the documented exception. Any other `catch (e) { }` without `Sentry.captureException` or an `// ignore: <reason>` comment is an anti-pattern.
 - **Restarting without flushing.** Calling `Updates.reloadAsync()` or `RNRestart.restart()` without first awaiting `Sentry.flush(2000)` drops the events that triggered the restart.
 - **DSN without `EXPO_PUBLIC_` prefix.** Anything other than `process.env.EXPO_PUBLIC_SENTRY_DSN` (read through `env`) is `undefined` on device and the SDK silently no-ops.
@@ -161,7 +166,7 @@ One-time setup: `eas secret:create --name SENTRY_AUTH_TOKEN --value $TOKEN`.
 
 See `../decisions.md` for:
 
-- Why `Sentry.init` lives at module scope in the route layer rather than as a lazy helper in `lib/`
-- Why `reactNavigationIntegration` is the chosen integration over the deprecated `routingInstrumentation` constant
+- Why `Sentry.init` lives as a module-scope side-effect in `lib/sentry.ts` (imported first by `app/_layout.tsx`) rather than a lazy helper
+- Why `expoRouterIntegration` is the chosen integration (expo-router auto-registers its nav ref) over `reactNavigationIntegration`
 - Why breadcrumbs go through `lib/log.ts` instead of direct `Sentry.addBreadcrumb` calls in app code
-- Why sourcemap upload is delegated to the EAS plugin rather than a post-build CI step
+- Why sourcemap upload is delegated to the EAS plugin (Android Gradle plugin path) rather than a post-build CI step

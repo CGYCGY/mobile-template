@@ -1,13 +1,13 @@
 ---
 name: expo-router-patterns
-description: Expo Router v6 conventions used in this codebase — group segments, nested layouts, Redirect-based auth gates, typed routes, and navigation rules.
+description: Expo Router conventions used in this codebase — group segments, nested layouts, Redirect-based auth gates, typed routes, and navigation rules.
 ---
 
 # Expo Router Patterns
 
 ## Purpose
 
-This codebase uses Expo Router v6 with `typedRoutes` enabled and the New Architecture. Routes are files, layouts are `_layout.tsx`, and the navigator is configured declaratively. The patterns below are not stylistic — they prevent the two classes of bugs Expo Router most often produces: render-time navigation loops and stringly-typed hrefs that drift from the route tree.
+This codebase uses Expo Router (the version that ships with Expo SDK 56) with `typedRoutes` enabled and the New Architecture. Routes are files, layouts are `_layout.tsx`, and the navigator is configured declaratively. The patterns below are not stylistic — they prevent the two classes of bugs Expo Router most often produces: render-time navigation loops and stringly-typed hrefs that drift from the route tree.
 
 ## Patterns
 

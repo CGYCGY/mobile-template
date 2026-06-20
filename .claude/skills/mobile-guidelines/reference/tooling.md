@@ -9,6 +9,8 @@ description: Bun + just + Biome + Lefthook + Jest + Maestro toolchain for this c
 
 This codebase has exactly one of each: one package manager (Bun), one task runner (`just`), one linter/formatter (Biome), one Git-hook manager (Lefthook), one unit test runner (Jest), one E2E runner (Maestro). The point is to remove the "which command do I run" question — every workflow has a `just` recipe, every commit goes through the same hooks, every CI step calls the same recipes a human would. The toolchain is opinionated so that a developer joining a fork can be productive in ten minutes.
 
+**Current stack baseline:** Expo SDK 56, React Native 0.85, React 19.2.3, Tamagui v2, Sentry v8 (`@sentry/react-native`), convex 1.40, react-native-mmkv v4, react-native-reanimated 4.3 (+ `react-native-worklets`).
+
 ## Patterns
 
 ### 1. Bun is the runtime and package manager
@@ -133,16 +135,20 @@ The `convex codegen` step must run **before** `typecheck` — `tsc` reads `conve
 // jest.config.js
 module.exports = {
   preset: 'jest-expo',
-  setupFilesAfterEach: ['./jest.setup.ts'],
+  setupFilesAfterEnv: ['./jest.setup.ts'],
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|...|tamagui|@tamagui/.*|posthog-react-native|@workos-inc/.*))',
   ],
-  moduleNameMapper: { '^@/(.*)$': '<rootDir>/$1' },
+  moduleNameMapper: { '^@/(.*)$': '<rootDir>/$1', /* + @babel/runtime pin */ },
   testPathIgnorePatterns: ['/node_modules/', '/e2e/', '/ios/', '/android/', '/.expo/', '/dist/'],
 };
 ```
 
-The `jest-expo` preset wires React Native + Expo's Jest config. The `transformIgnorePatterns` exception list must include every native-flavored package the test imports — when a new ESM-only RN library is added, append its scope here. The `@/*` alias mirrors `tsconfig.json:14`.
+The `jest-expo` preset wires React Native + Expo's Jest config. Notes:
+- The hook is `setupFilesAfterEnv` (runs the setup file after the test framework is installed) — not `setupFilesAfterEach`.
+- There is **no** `@testing-library/jest-native` dependency: its matchers are built into `@testing-library/react-native` v13. Don't re-add it or import its `extend-expect`.
+- `jest.setup.ts` mocks the native modules the unit suite can't load: `react-native-gesture-handler`, `react-native-safe-area-context`, `react-native-worklets`, `react-native-reanimated` (v4), `react-native-mmkv` (the v4 `createMMKV` **factory**, with a `remove` method), `expo-secure-store`, and `expo-router`.
+- `transformIgnorePatterns` must include every native-flavored package the test imports — when a new ESM-only RN library is added, append its scope here. A separate `moduleNameMapper` entry pins `@babel/runtime` to its resolved dir (some RN/Expo packages resolve runtime helpers relative to themselves, where bun's flat layout has no copy).
 
 ### 7. Maestro E2E lives under `e2e/`
 

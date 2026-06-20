@@ -7,9 +7,16 @@ description: Tokens-only styling rules for this codebase. Tamagui is the single 
 
 ## Purpose
 
-Tamagui is the single styling source in this codebase. Every color, spacing, radius, font size and breakpoint flows through theme tokens defined by `@tamagui/config/v4` and re-exported from `tamagui.config.ts`. The compiler can only flatten and optimize style props when you stay inside the token system — raw values bypass it and silently break dark mode, theming, and runtime perf.
+Tamagui is the single styling source in this codebase. Every color, spacing, radius, font size and breakpoint flows through theme tokens defined by `@tamagui/config/v5` and re-exported from `tamagui.config.ts`. The compiler can only flatten and optimize style props when you stay inside the token system — raw values bypass it and silently break dark mode, theming, and runtime perf.
 
 Use this doc when you author or review any component that sets a visual property.
+
+**Tamagui v2 config facts (`tamagui.config.ts`):**
+- Base config is `@tamagui/config/v5`; the `animations` driver is wired separately from `@tamagui/config/v5-reanimated` (v2 unbundles animations from the config).
+- `settings.onlyAllowShorthands: false` is set. Tamagui v2 rejects longhand style props (`backgroundColor`, `alignItems`, …) by default; this codebase uses longhands, so they are re-enabled. Both longhands and shorthands work here.
+- The animation prop on components was renamed `animation` → `transition` (e.g. `components/ui/Sheet.tsx` takes a `transition` prop and passes `transition="lazy"` to the overlay).
+- A `<Theme name={effectiveTheme}>` wrapper at the root is required for correct theme propagation in v2 — `defaultTheme` on the provider alone is not enough.
+- The `@tamagui/babel-plugin` extractor runs **only in production** (`disableExtraction: NODE_ENV !== 'production'` in `babel.config.js`): under jest the v2 extractor's injected runtime hits uninitialized state and throws, so it stays off everywhere but production builds.
 
 ## Patterns
 
@@ -159,9 +166,9 @@ If you find yourself wanting `StyleSheet.create`, write a `styled()` or use inli
 - **`StyleSheet.create({ ... })`** anywhere in `app/` or `components/`. There are zero such calls today (the only `StyleSheet` reference is the `absoluteFill` constant at `components/ui/BlurCard.tsx:43`); keep it that way.
 - **Raw hex / rgba** in component code. Use `$red10`, `$gray12`, `$background`, etc. `components/ui/Button.tsx:14` intentionally uses `'white'` as a special case for high-contrast button labels — do not generalize this; new code should reach for `$color` or a token.
 - **`style={{ padding: 16, backgroundColor: '#fff' }}`** on Tamagui components — defeats the compiler and the theme. Use props: `padding="$4" backgroundColor="$background"`.
-- **Per-screen `<Theme name="...">` wrappers** — themes belong at the root (`Provider`) and switch via the UI store (`useUIStore.theme`).
+- **Per-screen `<Theme name="...">` wrappers** — the **single** `<Theme name={effectiveTheme}>` belongs at the root, directly under `TamaguiProvider`, and switches via the UI store (`useUIStore.theme` + `useColorScheme`). v2 requires this root wrapper for propagation; do not add extra per-screen `<Theme>` wrappers to "fix" theming.
 - **Conditional style props with ternaries on heavily-reused components** — use a variant map (see `Button`) or a `variants:` block.
 
 ## Decision Rationale
 
-See `../decisions.md` for the reasoning behind making Tamagui the single styling source (compiler-driven flattening, theme tokens for dark mode, removal of duplicate spacing scales, and why we standardize on `@tamagui/config/v4` defaults instead of a custom token set).
+See `../decisions.md` for the reasoning behind making Tamagui the single styling source (compiler-driven flattening, theme tokens for dark mode, removal of duplicate spacing scales, and why we standardize on `@tamagui/config/v5` defaults — plus the v5-reanimated animations driver and `onlyAllowShorthands: false` — instead of a custom token set).

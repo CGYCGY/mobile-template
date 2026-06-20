@@ -109,20 +109,21 @@ SplashScreen.preventAutoHideAsync().catch(() => {
 
 The `// ignore: ...` comment is mandatory because it forces the author to articulate _why_ this error is safe to drop. A reviewer sees the comment and either agrees or pushes back; a bare `catch {}` triggers no thought at all.
 
-### 3. `RootErrorBoundary` is the outermost provider
+### 3. `RootErrorBoundary` is the outermost provider — with a raw-RN fallback
 
-A class component error boundary lives at the very top of `app/_layout.tsx`, wrapping every other provider — Tamagui, Convex, PostHog, the navigator, everything. If any of them throws on render, the boundary catches it and reports to Sentry. Functional providers cannot catch render errors; this must be a class component.
+A class component error boundary lives at the very top of `app/_layout.tsx`, wrapping every other provider — Tamagui, Convex, PostHog, the navigator, everything. If any of them throws on render, the boundary catches it, reports to Sentry, and renders a "Try again" fallback. Functional providers cannot catch render errors; this must be a class component.
 
 ```tsx
 // app/_layout.tsx
-import * as Sentry from '@sentry/react-native';
 import { Component, type ReactNode } from 'react';
+import { Pressable, Text, View } from 'react-native';
+import { Sentry } from '@/lib/sentry';
 
 class RootErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean }
 > {
-  state = { hasError: false };
+  override state = { hasError: false };
 
   static getDerivedStateFromError() {
     return { hasError: true };
@@ -136,7 +137,22 @@ class RootErrorBoundary extends Component<
 
   override render() {
     if (this.state.hasError) {
-      return null;   // upgrade to a real fallback UI in your fork
+      // This boundary wraps TamaguiProvider, so the fallback CANNOT use Tamagui
+      // tokens/components — if the crash IS a TamaguiProvider failure, a Tamagui
+      // fallback would re-throw and re-trigger the boundary. Raw RN + hex only.
+      return (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24, backgroundColor: '#15130f' }}>
+          <Text style={{ color: '#f7f4ee', fontSize: 18, fontWeight: '600' }}>
+            Something went wrong
+          </Text>
+          <Pressable
+            onPress={() => this.setState({ hasError: false })}
+            style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, backgroundColor: '#d97757' }}
+          >
+            <Text style={{ color: '#ffffff', fontWeight: '600' }}>Try again</Text>
+          </Pressable>
+        </View>
+      );
     }
     return this.props.children;
   }
@@ -147,9 +163,9 @@ function RootLayout() { /* ... */ }
 export default Sentry.wrap(RootLayout);
 ```
 
-The wiring: `RootErrorBoundary` is the **outermost** JSX node in `RootLayout`'s return, and `Sentry.wrap(RootLayout)` is the **default export** (`app/_layout.tsx:82`). The combination means routing breadcrumbs flow through `Sentry.wrap`, and any render error inside the wrapped tree is caught by the boundary before the screen blanks.
+The wiring: `RootErrorBoundary` is the **outermost** JSX node in `RootLayout`'s return, and `Sentry.wrap(RootLayout)` is the **default export**. The combination means routing breadcrumbs flow through `Sentry.wrap`, and any render error inside the wrapped tree is caught by the boundary before the screen blanks.
 
-Forks should replace the `return null` with a real fallback UI ("Something went wrong — restart" + a button) before shipping to production.
+**Why the fallback uses raw React Native + hex colors, not Tamagui.** The boundary sits *above* `TamaguiProvider`. A render crash there could be the provider itself failing; if the fallback reached for Tamagui tokens or components it would throw again and the boundary would loop on a blank screen. Raw `View` / `Text` / `Pressable` with literal hex values have no provider dependency, so the fallback renders no matter what failed. This is the one place in the app where raw RN primitives and hex colors are not just allowed but required (the Tamagui tokens-only rule does not apply here).
 
 ### 4. Never throw strings
 
@@ -199,7 +215,8 @@ SecureStore.setItemAsync('token', token).catch((e) => {
 - **Throwing strings.** `throw 'something broke'` has no stack and Sentry shows it as `Error: Non-Error captured`. Use `throw new Error(...)`.
 - **`useEffect(() => { somePromise() }, [])` with no `.catch`.** A floating rejection becomes unhandled. Wrap the call in an async IIFE with `try/catch` or attach `.catch(log.error)`.
 - **Error boundary placed inside a provider.** If `RootErrorBoundary` sits inside `<TamaguiProvider>` instead of outside it, a TamaguiProvider render error escapes the boundary and blanks the app.
-- **Removing `Sentry.wrap` on the default export.** `app/_layout.tsx:82`'s `export default Sentry.wrap(RootLayout)` is what enables routing breadcrumbs and `reactNavigationIntegration` to track screens. Exporting the bare `RootLayout` silently breaks Sentry's performance and routing traces.
+- **Removing `Sentry.wrap` on the default export.** `export default Sentry.wrap(RootLayout)` is what enables routing breadcrumbs and lets `expoRouterIntegration` track screens. Exporting the bare `RootLayout` silently breaks Sentry's performance and routing traces.
+- **Using Tamagui in the `RootErrorBoundary` fallback.** The boundary wraps `TamaguiProvider`; a Tamagui-based fallback re-throws when the crash is a provider failure. Keep the fallback on raw RN primitives + hex.
 
 ## Decision Rationale
 

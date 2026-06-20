@@ -10,20 +10,22 @@ This file records the locked decisions that shaped these guidelines. Each entry 
 **Decision:** The root layout (`app/_layout.tsx`) wraps providers in this exact order from outermost to innermost:
 
 ```
-RootErrorBoundary
+RootErrorBoundary               (raw-RN fallback — must NOT use Tamagui)
   └─ PostHogProvider
+       ├─ PostHogInstrumentation (sibling: screen()/identify()/reset())
        └─ TamaguiProvider
-            └─ ThemeProvider
-                 └─ ConvexProvider
+            └─ Theme name={effectiveTheme}
+                 └─ ConvexProviderWithAuth (client + useAuth)
                       └─ GestureHandlerRootView
                            └─ SafeAreaProvider
                                 └─ Stack (Expo Router)
 ```
 
 **Rationale:**
-- `RootErrorBoundary` is outermost so it catches errors from every provider below it.
-- `PostHogProvider` and `TamaguiProvider` need to live above any screen that emits events or styles.
-- `ConvexProvider` is below theming so screens can render a loading state in the right theme during auth bridge handoff.
+- `RootErrorBoundary` is outermost so it catches errors from every provider below it. Because it wraps `TamaguiProvider`, its fallback UI uses **raw React Native primitives + hex colors** — a Tamagui-based fallback would re-throw when the crash is a TamaguiProvider failure. See `reference/error-handling.md`.
+- `PostHogProvider` and `TamaguiProvider` need to live above any screen that emits events or styles. `PostHogInstrumentation` mounts inside the provider so `usePostHog()` is available.
+- A `<Theme name={...}>` wrapper sits below `TamaguiProvider` because Tamagui v2 needs an explicit `<Theme>` for correct theme propagation; `defaultTheme` alone is not enough.
+- `ConvexProviderWithAuth` is below theming so screens can render a loading state in the right theme; it is driven by `useAuth()` and fetches a token only once authenticated.
 - `GestureHandlerRootView` + `SafeAreaProvider` are the React Native runtime boundaries — they go last (closest to screens) because they don't need to wrap context providers.
 
 **How to apply:** Do not reorder. If you add a new provider, place it according to: error boundary first, app-wide concerns next, RN runtime concerns last.
@@ -33,20 +35,20 @@ RootErrorBoundary
 ## Sentry initialization
 
 **Date:** 2026-05-19
-**Decision:** `Sentry.init({...})` is called at **module scope** at the top of `app/_layout.tsx` (or a file imported synchronously by it before any React tree renders). The default export is wrapped with `Sentry.wrap(RootLayout)`. Do not wrap `Sentry.init` in a lazy helper that requires explicit invocation.
+**Decision:** `Sentry.init({...})` is called at **module scope** in `lib/sentry.ts`, which `app/_layout.tsx` imports on its **first line** (`import '@/lib/sentry';`) so init runs before any React tree renders. The default export is wrapped with `Sentry.wrap(RootLayout)`. The integration is `expoRouterIntegration()` and the DSN is `EXPO_PUBLIC_SENTRY_DSN`. Do not wrap `Sentry.init` in a lazy helper that requires explicit invocation.
 
-**Rationale:** Module-scope init runs before React's first render. Lazy init may miss early errors (e.g., during provider hydration) and creates a hidden coupling on whoever remembers to call the helper.
+**Rationale:** Module-scope init runs before React's first render. Lazy init may miss early errors (e.g., during provider hydration) and creates a hidden coupling on whoever remembers to call the helper. Keeping it in `lib/sentry.ts` (imported first) also lets other modules `import { Sentry } from '@/lib/sentry'` without re-initializing.
 
-**How to apply:** A new project that copies this codebase must verify `Sentry.init` is at the top of `app/_layout.tsx`, not lazily called. See `reference/observability-sentry.md`.
+**How to apply:** A new project that copies this codebase must verify `lib/sentry.ts` runs `Sentry.init` at module scope and that `app/_layout.tsx` imports it first — not lazily called. See `reference/observability-sentry.md`.
 
 ---
 
 ## PostHog instance ownership
 
 **Date:** 2026-05-19
-**Decision:** PostHog has a **single** instance, managed by the `<PostHogProvider apiKey={EXPO_PUBLIC_POSTHOG_KEY} options={{captureAppLifecycleEvents: true, captureScreens: false}}>` at the root. Consumers access it via `usePostHog()` from `posthog-react-native`. Do not create a standalone `posthog` client in a `lib/` file.
+**Decision:** PostHog has a **single** instance, managed by the `<PostHogProvider apiKey={EXPO_PUBLIC_POSTHOG_KEY} options={{captureAppLifecycleEvents: true, captureScreens: false}}>` at the root (props live in `postHogProviderProps`, `lib/posthog.ts`). Consumers access it via `usePostHog()` from `posthog-react-native`. Do not create a standalone `posthog` client in a `lib/` file.
 
-`captureScreens` is **false** because Expo Router v6 / React Navigation v7 break PostHog's autocapture wiring. Screen events are emitted manually via `posthog.screen(name, props)` from route effects (or a small hook).
+`captureScreens` is **false** because screen tracking is done manually via the `PostHogInstrumentation` component (`lib/posthog.ts`) for control over event names. Mounted once inside the provider, it fires `posthog.screen(pathname)` on every route change (driven by `usePathname`), calls `posthog.identify(user.id)` on sign-in, and `posthog.reset()` on sign-out — the reset is what stops one user's anonymous distinct_id from bleeding into the next on a shared device.
 
 **Rationale:** Two instances means two queues, two flush cycles, and the risk of double-capturing events. Single source of truth makes identify/reset/feature-flag state coherent.
 
@@ -59,7 +61,7 @@ RootErrorBoundary
 **Date:** 2026-05-19
 **Decision:**
 - `useAuthStore` (Zustand + MMKV `persist`) holds the `user` object only — `partialize` is used to persist a minimal slice.
-- **Access and refresh tokens live in SecureStore exclusively** — never in Zustand, never in MMKV.
+- **Access, refresh, and id tokens live in SecureStore exclusively** — never in Zustand, never in MMKV. They are written across **separate keys** (access / refresh / id / meta), not one JSON blob: the combined two JWTs + user payload routinely exceed `expo-secure-store`'s ~2048-byte per-item limit, and an over-limit write can fail **silently**.
 - Route gating is done with `<Redirect>` inside `app/(auth)/_layout.tsx` and `app/(tabs)/_layout.tsx`. Do not call `router.replace` during render.
 
 **Rationale:** Tokens belong in the OS keychain (Keychain / Keystore via `expo-secure-store`). MMKV is fast but not encrypted at rest with hardware-backed keys. Mixing the two leaks secrets through Zustand's `persist`. Redirects in render cause warnings and re-render loops; the `<Redirect>` component is purpose-built for this.
@@ -79,14 +81,14 @@ RootErrorBoundary
 
 ---
 
-## Convex `useConvexAuthBridge` mount point
+## Convex auth: root-mounted `ConvexProviderWithAuth`
 
-**Date:** 2026-05-19
-**Decision:** `useConvexAuthBridge` is mounted inside `app/(tabs)/_layout.tsx` (or any post-auth group layout). It is **not** mounted in `app/_layout.tsx`.
+**Date:** 2026-06-20 (supersedes the 2026-05-19 `useConvexAuthBridge` mount-point decision)
+**Decision:** Convex auth is wired with `ConvexProviderWithAuth` mounted at the **root** in `app/_layout.tsx`, driven by the `useAuth()` hook (`lib/convex/use-auth.ts`) which returns `{ isLoading, isAuthenticated: !!user, fetchAccessToken }`. Token fetch is centralized in the module-scoped `fetchConvexAccessToken()` (`lib/convex/auth.ts`). There is **no** `useConvexAuthBridge` hook and no per-layout token-injection mount.
 
-**Rationale:** The bridge pushes the WorkOS access token into the Convex client. It only makes sense after auth has completed. Mounting it at root means it runs on the auth screens too, where there is no token to push.
+**Rationale:** Convex calls `fetchAccessToken` only when `isAuthenticated` is true. Pre-auth `user` is `null`, so the fetcher is never invoked on the sign-in screens — the old "null fetcher pre-auth storms `/authenticate`" failure mode (which previously forced a post-auth mount point) no longer exists. Root-mounting is therefore safe and removes the per-route-group bookkeeping the bridge required. `fetchConvexAccessToken` is dual-flighted (separate forced vs read in-flight) so a `forceRefreshToken: true` call never reuses a stale read.
 
-**How to apply:** New post-auth route groups (e.g., `app/(admin)/_layout.tsx`) must also call `useConvexAuthBridge()` at the top of their layout. See `reference/auth-workos-pkce.md`.
+**How to apply:** Do not add `useConvexAuthBridge()` (or any `convexClient.setAuth(...)` call) to a layout or screen. New post-auth route groups need nothing extra — the root provider already drives auth for the whole tree. See `reference/auth-workos-pkce.md`.
 
 ---
 
@@ -158,7 +160,7 @@ In both modes: mobile code imports only from `@/convex/_generated/api`, never di
 
 | Data type | Storage |
 |---|---|
-| Access tokens, refresh tokens, OAuth state, PKCE verifier | SecureStore |
+| Access / refresh / id tokens, OAuth state, PKCE verifier | SecureStore (tokens split across separate keys — see Auth state ownership) |
 | User profile snapshot (via Zustand persist) | MMKV |
 | UI prefs, theme, cached responses | MMKV |
 | Anything biometric-gateable | SecureStore |
@@ -173,8 +175,10 @@ In both modes: mobile code imports only from `@/convex/_generated/api`, never di
 
 ## Tamagui as the only styling source
 
-**Date:** 2026-05-19
+**Date:** 2026-05-19 (config bumped to v5 + Tamagui v2 settings on 2026-06-20)
 **Decision:** Tamagui tokens (`$color`, `$space`, `$size`, etc.) are the only way to style components. No `StyleSheet.create`, no raw hex, no inline `style={{padding: 16}}` for spacing/colors. `styled()` for reusable variants; inline Tamagui props for one-offs.
+
+Config specifics (`tamagui.config.ts`): the base is `@tamagui/config/v5` with the v5-reanimated `animations` driver wired in (v2 unbundles animations from the config). `settings.onlyAllowShorthands: false` is set because Tamagui v2 rejects longhand style props (`backgroundColor`, `alignItems`, …) by default and this codebase uses longhands. The animation prop on components was renamed `animation` → `transition` (see `components/ui/Sheet.tsx`).
 
 **Rationale:** One styling system means consistent theming (dark mode, density variants) and one place to update tokens. Mixing `StyleSheet` and Tamagui produces a half-themed app.
 

@@ -59,21 +59,24 @@ Run this list before every commit. It is not "nice to have" — every item maps 
 
 ### Observability (Sentry + PostHog)
 
-- [ ] `Sentry.init({...})` is at module scope in `app/_layout.tsx`, before the component declaration — not inside a hook or a lazy helper.
-- [ ] `export default Sentry.wrap(RootLayout)` is the default export (`app/_layout.tsx:82`).
-- [ ] `integrations: [Sentry.reactNavigationIntegration({...})]` is present.
-- [ ] `RootErrorBoundary` is the outermost component returned from `RootLayout`.
+- [ ] `Sentry.init({...})` runs at module scope in `lib/sentry.ts`, imported on the first line of `app/_layout.tsx` — not inside a hook or a lazy helper.
+- [ ] `export default Sentry.wrap(RootLayout)` is the default export.
+- [ ] `integrations: [Sentry.expoRouterIntegration()]` is present (not `reactNavigationIntegration`).
+- [ ] The DSN is `EXPO_PUBLIC_SENTRY_DSN`; sourcemaps upload via the `@sentry/react-native/expo` plugin's Android Gradle path with `SENTRY_DISABLE_AUTO_UPLOAD` set per EAS profile.
+- [ ] `RootErrorBoundary` is the outermost component returned from `RootLayout`, and its fallback uses raw RN primitives + hex (it wraps `TamaguiProvider`).
 - [ ] All `catch` blocks either call `log.error(...)` / `Sentry.captureException(...)` or have a `// ignore: <reason>` comment.
 - [ ] No `console.*` outside `lib/log.ts` (each call there has a `biome-ignore lint/suspicious/noConsole` comment).
 - [ ] PostHog: a single `PostHogProvider` mounted from `app/_layout.tsx`; no second `posthog-react-native` instance elsewhere.
-- [ ] PostHog is configured with `captureScreens: false` — screens are tracked via `Sentry.reactNavigationIntegration`, not duplicate PostHog autocapture.
+- [ ] PostHog is configured with `captureScreens: false` — screens are tracked manually by `<PostHogInstrumentation/>` (usePathname-driven), which also identifies on sign-in and resets on sign-out.
 
 ### Auth
 
 - [ ] No `Math.random()` for nonces, state, or PKCE verifiers — use `expo-crypto` / `react-native-quick-crypto`.
-- [ ] `useConvexAuthBridge` (or equivalent token-injection hook) is mounted **post-auth**, inside the authenticated route group, not in `_layout.tsx`.
+- [ ] Convex auth is driven by the root `ConvexProviderWithAuth` + `useAuth()` only — no `useConvexAuthBridge`/`convexClient.setAuth(...)` in a layout or screen.
+- [ ] Tokens are stored across **split** SecureStore keys (access/refresh/id/meta), not one over-limit JSON blob.
+- [ ] `refreshAccessToken` clears tokens only on a definitive `invalid_grant`; transient 429/5xx/network failures throw and preserve tokens (offline survival).
 - [ ] Tokens never enter Zustand; only the user profile object does, and persistence uses `partialize` to keep tokens out of storage.
-- [ ] Sign-out clears: Sentry user (`Sentry.setUser(null)`), PostHog (`posthog.reset()`), SecureStore tokens, and the auth Zustand store (`clear()`).
+- [ ] Sign-out clears SecureStore tokens and the auth Zustand store (`clear()`); PostHog `reset()` is driven by `PostHogInstrumentation` on the `user → null` transition.
 
 ## Tooling Validation (CRITICAL — run in this order)
 
