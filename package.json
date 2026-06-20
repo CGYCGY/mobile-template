@@ -87,9 +87,6 @@
       ]
     }
   },
-  "ignoreScripts": [
-    "sharp"
-  ],
   "trustedDependencies": [
     "esbuild",
     "lefthook",
