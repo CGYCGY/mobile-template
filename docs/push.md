@@ -64,20 +64,38 @@ Add channels per category (e.g. `chat`, `marketing`) when you want users to be a
 
 ## 5. Sending a push from Convex
 
-The action lives at `convex/push.ts` as `sendPushToUser`. It POSTs to the Expo Push API:
+The action lives at `convex/push.ts` as `sendPushToUser`. It looks up every push token stored for the user and POSTs them to the Expo Push API as one batch:
 
 ```ts
-// convex/push.ts (sketch)
+// convex/push.ts (abridged)
 export const sendPushToUser = action({
-  args: { userId: v.id('users'), title: v.string(), body: v.string() },
-  handler: async (ctx, { userId, title, body }) => {
-    const user = await ctx.runQuery(internal.users.getById, { userId });
-    if (!user?.pushToken) return;
-    await fetch('https://exp.host/--/api/v2/push/send', {
+  args: {
+    userId: v.id('users'),
+    title: v.string(),
+    body: v.string(),
+    data: v.optional(v.any()),
+  },
+  handler: async (ctx, { userId, title, body, data }) => {
+    // One user can have several devices, so fan out over every stored token.
+    const tokens = await ctx.runQuery(internal.push.tokensForUser, { userId });
+    if (tokens.length === 0) return { sent: 0 };
+
+    const messages = tokens.map((row) => ({
+      to: row.token,
+      title,
+      body,
+      data,
+      sound: 'default' as const,
+    }));
+
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: user.pushToken, title, body, sound: 'default' }),
+      body: JSON.stringify(messages), // the Expo API accepts a batch array
     });
+    if (!res.ok) throw new Error(`Expo push send failed: ${res.status}`);
+
+    return { sent: messages.length };
   },
 });
 ```
