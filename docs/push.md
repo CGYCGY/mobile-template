@@ -34,15 +34,17 @@ EAS uses the service-account key when forwarding pushes through the Expo Push Se
 
 ## 3. Permission request and token registration
 
-The client-side flow (already implemented in `lib/notifications/registerPushToken.ts`):
+Two pieces are wired into the root layout (`app/_layout.tsx`):
 
-1. On sign-in, ask the OS for notification permission (`Notifications.requestPermissionsAsync()`).
-2. If granted, fetch the Expo push token (`Notifications.getExpoPushTokenAsync({ projectId })`). The `projectId` is the `extra.eas.projectId` from `app.config.ts`.
-3. Send the token to a Convex mutation that stores it on the user row (or a `pushTokens` table if you need multi-device).
+- `configureNotifications()` (`lib/notifications/setup.ts`) runs once on mount — installs the foreground notification handler and the Android channel, independent of auth.
+- `usePushRegistration()` (`lib/notifications/usePushRegistration.ts`) calls `registerForPushNotificationsAsync()` once a user is authenticated (deduped per user id, so it re-runs only when the signed-in user changes). That call:
+  1. asks the OS for notification permission (`Notifications.requestPermissionsAsync()`),
+  2. fetches the Expo push token (`Notifications.getExpoPushTokenAsync({ projectId })` — `projectId` is `extra.eas.projectId` from `app.config.ts`),
+  3. sends it to the `push.registerExpoPushToken` Convex mutation, which stores it in the `pushTokens` table (multi-device ready).
 
-Tokens look like `ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]`. They are app-scoped and rotate when the app is reinstalled or the OS revokes notifications.
+Registration resolves to `unsupported` on web/simulator and swallows its own errors, so it never crashes the tree. Tokens look like `ExponentPushToken[…]`; they're app-scoped and rotate on reinstall or when the OS revokes notifications.
 
-**Best time to ask:** right after a user action that contextualizes the prompt ("turn on alerts for new messages?"), not on first launch. The OS only lets you prompt once — a "no" persists until the user changes Settings manually.
+**Prompting at sign-in vs contextually.** The default asks for permission as soon as the user is authenticated. The OS only lets you prompt once — a "no" sticks until the user flips it in Settings — so many apps prompt contextually instead ("turn on alerts for new messages?"). To do that, drop `usePushRegistration()` from the root layout and call `registerForPushNotificationsAsync()` from the screen that follows the contextualizing action.
 
 ## 4. Android channel setup
 
