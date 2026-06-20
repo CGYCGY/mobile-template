@@ -7,7 +7,9 @@ if (env.EXPO_PUBLIC_SENTRY_DSN) {
     tracesSampleRate: 0.1,
     profilesSampleRate: 0.1,
     enableAutoSessionTracking: true,
-    integrations: [Sentry.reactNavigationIntegration()],
+    // expoRouterIntegration auto-wires expo-router's navigationRef, unlike
+    // reactNavigationIntegration which requires a manual ref to be registered
+    integrations: [Sentry.expoRouterIntegration()],
   });
 }
 

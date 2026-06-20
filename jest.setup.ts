@@ -70,6 +70,7 @@ jest.mock('expo-router', () => ({
     canGoBack: jest.fn().mockReturnValue(true),
   }),
   useLocalSearchParams: () => ({}),
+  usePathname: () => '/',
   useSegments: () => [],
   Link: ({ children }: { children: React.ReactNode }) => children,
   Stack: { Screen: () => null },
