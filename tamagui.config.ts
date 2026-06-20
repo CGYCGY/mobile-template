@@ -19,7 +19,6 @@ const config = createTamagui({
 export type AppConfig = typeof config;
 
 declare module 'tamagui' {
-  // biome-ignore lint/suspicious/noEmptyInterface: required by Tamagui module augmentation
   interface TamaguiCustomConfig extends AppConfig {}
 }
 
