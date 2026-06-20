@@ -22,7 +22,10 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       user: null,
-      isLoading: false,
+      // Start true: bootstrap always runs on cold start, so consumers (the tabs
+      // gate, Convex's useAuth) should treat auth as pending until it resolves
+      // instead of momentarily deciding the user is signed out.
+      isLoading: true,
       setUser: (user) => set({ user }),
       setLoading: (isLoading) => set({ isLoading }),
       clear: () => set({ user: null, isLoading: false }),
