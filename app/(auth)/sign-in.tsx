@@ -1,7 +1,8 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { H1, Paragraph, YStack } from 'tamagui';
 import { Button } from '@/components/ui/Button';
-import { signIn } from '@/lib/auth';
+import { completeSignIn, signIn } from '@/lib/auth';
 
 export default function SignInScreen() {
   const [loading, setLoading] = useState(false);
@@ -11,7 +12,17 @@ export default function SignInScreen() {
     setError(null);
     setLoading(true);
     try {
-      await signIn();
+      const result = await signIn();
+      // On iOS the OAuth redirect is delivered through openAuthSessionAsync's
+      // return value (no deep link fires), so the token exchange must happen
+      // here. The auth/callback route only runs on Android's deep-link path.
+      if (result.type === 'success') {
+        await completeSignIn({ code: result.code, state: result.state });
+        router.replace('/(tabs)');
+      } else if (result.type === 'error') {
+        setError(result.message);
+      }
+      // cancel/dismiss: the user backed out — leave the sign-in screen as-is.
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed');
     } finally {
