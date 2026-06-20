@@ -13,6 +13,10 @@ import { TamaguiProvider, Theme } from 'tamagui';
 import { useAuthBootstrap } from '@/lib/auth';
 import { convexClient, useAuth } from '@/lib/convex';
 import {
+  configureNotifications,
+  usePushRegistration,
+} from '@/lib/notifications';
+import {
   PostHogInstrumentation,
   PostHogProvider,
   postHogProviderProps,
@@ -93,6 +97,11 @@ function RootLayout() {
   // Rehydrate the auth store from stored tokens on cold start; without this a
   // returning user appears signed out despite valid tokens.
   useAuthBootstrap();
+  usePushRegistration();
+
+  useEffect(() => {
+    configureNotifications();
+  }, []);
 
   useEffect(() => {
     if (fontsLoaded || fontError) {
