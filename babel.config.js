@@ -1,4 +1,4 @@
-module.exports = function (api) {
+module.exports = (api) => {
   api.cache(true);
 
   // Plugin ordering is load-bearing:
@@ -15,7 +15,10 @@ module.exports = function (api) {
           components: ['tamagui'],
           config: './tamagui.config.ts',
           logTimings: true,
-          disableExtraction: process.env.NODE_ENV === 'development',
+          // Extract only for production builds. Under jest (NODE_ENV=test) the v2
+          // extractor's injected runtime hits uninitialized state and throws, so
+          // keep it off everywhere but production.
+          disableExtraction: process.env.NODE_ENV !== 'production',
         },
       ],
       'react-native-reanimated/plugin',

@@ -11,11 +11,16 @@ export default function AuthCallbackScreen() {
     let cancelled = false;
     async function run() {
       try {
+        if (!params.code || !params.state) {
+          throw new Error('Missing code or state in auth callback');
+        }
         await completeSignIn({ code: params.code, state: params.state });
         if (!cancelled) router.replace('/(tabs)');
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Authentication failed');
+          setError(
+            err instanceof Error ? err.message : 'Authentication failed',
+          );
         }
       }
     }

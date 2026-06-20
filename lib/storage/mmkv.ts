@@ -1,7 +1,7 @@
-import { MMKV } from 'react-native-mmkv';
+import { createMMKV } from 'react-native-mmkv';
 import type { StateStorage } from 'zustand/middleware';
 
-export const storage = new MMKV({ id: 'mobile-template' });
+export const storage = createMMKV({ id: 'mobile-template' });
 
 export const mmkvStorage: StateStorage = {
   getItem: (name) => {
@@ -12,6 +12,6 @@ export const mmkvStorage: StateStorage = {
     storage.set(name, value);
   },
   removeItem: (name) => {
-    storage.delete(name);
+    storage.remove(name);
   },
 };

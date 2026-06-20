@@ -22,12 +22,6 @@ const config: ExpoConfig = {
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
-  newArchEnabled: true,
-  splash: {
-    image: './assets/splash.png',
-    resizeMode: 'contain',
-    backgroundColor: '#ffffff',
-  },
   ios: {
     supportsTablet: true,
     bundleIdentifier,
@@ -46,7 +40,16 @@ const config: ExpoConfig = {
     'expo-image-picker',
     'expo-notifications',
     'expo-font',
-    'expo-splash-screen',
+    [
+      // SDK 56 dropped the top-level `splash` config key; splash is configured
+      // through the plugin now.
+      'expo-splash-screen',
+      {
+        image: './assets/splash.png',
+        resizeMode: 'contain',
+        backgroundColor: '#ffffff',
+      },
+    ],
     [
       'expo-build-properties',
       {
@@ -54,7 +57,18 @@ const config: ExpoConfig = {
         android: {},
       },
     ],
-    '@sentry/react-native/expo',
+    [
+      '@sentry/react-native/expo',
+      {
+        url: 'https://sentry.io/',
+        organization: process.env.SENTRY_ORG ?? 'your-sentry-org',
+        project: process.env.SENTRY_PROJECT ?? 'mobile-template',
+        // The default bundle-task hook can't parse Expo's `export:embed` flavored
+        // task and skips sourcemap upload; the AGP integration uploads Hermes
+        // sourcemaps reliably instead.
+        experimental_android: { enableAndroidGradlePlugin: true },
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,

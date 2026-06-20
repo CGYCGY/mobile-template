@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
+import type { Doc } from './_generated/dataModel';
 import { action, internalQuery, mutation } from './_generated/server';
 
 const platform = v.union(v.literal('ios'), v.literal('android'));
@@ -31,10 +32,7 @@ export const registerExpoPushToken = mutation({
       .unique();
 
     if (existing) {
-      if (
-        existing.userId !== user._id ||
-        existing.platform !== tokenPlatform
-      ) {
+      if (existing.userId !== user._id || existing.platform !== tokenPlatform) {
         await ctx.db.patch(existing._id, {
           userId: user._id,
           platform: tokenPlatform,
@@ -90,7 +88,12 @@ export const sendPushToUser = action({
     data: v.optional(v.any()),
   },
   handler: async (ctx, { userId, title, body, data }) => {
-    const tokens = await ctx.runQuery(internal.push.tokensForUser, { userId });
+    // Annotate to break the self-referential type cycle: this action reads
+    // internal.push.tokensForUser, whose type is derived from this same module.
+    const tokens: Doc<'pushTokens'>[] = await ctx.runQuery(
+      internal.push.tokensForUser,
+      { userId },
+    );
     if (tokens.length === 0) return { sent: 0 };
 
     const messages = tokens.map((row) => ({

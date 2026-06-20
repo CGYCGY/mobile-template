@@ -1,7 +1,5 @@
 import '@/lib/sentry';
 
-import { DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Sentry } from '@/lib/sentry';
 import { ConvexProvider } from 'convex/react';
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
@@ -13,6 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { TamaguiProvider } from 'tamagui';
 import { convexClient } from '@/lib/convex';
 import { PostHogProvider, postHogProviderProps } from '@/lib/posthog';
+import { Sentry } from '@/lib/sentry';
 import tamaguiConfig from '@/tamagui.config';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
@@ -23,7 +22,7 @@ class RootErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean }
 > {
-  state = { hasError: false };
+  override state = { hasError: false };
 
   static getDerivedStateFromError() {
     return { hasError: true };
@@ -60,24 +59,22 @@ function RootLayout() {
     <RootErrorBoundary>
       <PostHogProvider {...postHogProviderProps}>
         <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
-          <ThemeProvider value={DefaultTheme}>
-            <ConvexProvider client={convexClient}>
-              {/* testID is the e2e harness's "app rendered" signal: it appears only
-                  past the fonts/splash gate and drops during a JS reload, which the
-                  native activity (identical while bundling/reloading) cannot show. */}
-              <GestureHandlerRootView testID="app-loaded" style={{ flex: 1 }}>
-                <SafeAreaProvider>
-                  <StatusBar style="auto" />
-                  <Stack screenOptions={{ headerShown: false }}>
-                    <Stack.Screen name="(auth)" />
-                    <Stack.Screen name="(tabs)" />
-                    <Stack.Screen name="auth/callback" />
-                    <Stack.Screen name="+not-found" />
-                  </Stack>
-                </SafeAreaProvider>
-              </GestureHandlerRootView>
-            </ConvexProvider>
-          </ThemeProvider>
+          <ConvexProvider client={convexClient}>
+            {/* testID is the e2e harness's "app rendered" signal: it appears only
+                past the fonts/splash gate and drops during a JS reload, which the
+                native activity (identical while bundling/reloading) cannot show. */}
+            <GestureHandlerRootView testID="app-loaded" style={{ flex: 1 }}>
+              <SafeAreaProvider>
+                <StatusBar style="auto" />
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="(auth)" />
+                  <Stack.Screen name="(tabs)" />
+                  <Stack.Screen name="auth/callback" />
+                  <Stack.Screen name="+not-found" />
+                </Stack>
+              </SafeAreaProvider>
+            </GestureHandlerRootView>
+          </ConvexProvider>
         </TamaguiProvider>
       </PostHogProvider>
     </RootErrorBoundary>

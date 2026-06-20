@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Sheet as TamaguiSheet, type SheetProps } from 'tamagui';
+import { type SheetProps, Sheet as TamaguiSheet } from 'tamagui';
 
 type Props = Omit<SheetProps, 'children'> & {
   children: ReactNode;
@@ -10,7 +10,8 @@ export function Sheet({
   children,
   snapPoints = [80, 50],
   dismissOnSnapToBottom = true,
-  animation = 'medium',
+  // Tamagui v2 renamed the `animation` prop to `transition`.
+  transition = 'medium',
   modal = true,
   ...rest
 }: Props) {
@@ -18,12 +19,12 @@ export function Sheet({
     <TamaguiSheet
       snapPoints={snapPoints}
       dismissOnSnapToBottom={dismissOnSnapToBottom}
-      animation={animation}
+      transition={transition}
       modal={modal}
       {...rest}
     >
       <TamaguiSheet.Overlay
-        animation="lazy"
+        transition="lazy"
         enterStyle={{ opacity: 0 }}
         exitStyle={{ opacity: 0 }}
       />

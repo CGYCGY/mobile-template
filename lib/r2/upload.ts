@@ -1,4 +1,6 @@
-import * as FileSystem from 'expo-file-system';
+// SDK 56 moved the legacy upload API (uploadAsync, FileSystemUploadType) out of
+// the main module into expo-file-system/legacy.
+import * as FileSystem from 'expo-file-system/legacy';
 import { api } from '@/convex/_generated/api';
 import { convexClient } from '@/lib/convex';
 
@@ -19,10 +21,10 @@ export async function uploadToR2({
   contentType,
   key,
 }: UploadInput): Promise<UploadResult> {
-  const presigned = await convexClient.action(
-    api.r2.generatePresignedPutUrl,
-    { contentType, key },
-  );
+  const presigned = await convexClient.action(api.r2.generatePresignedPutUrl, {
+    contentType,
+    key,
+  });
 
   try {
     const response = await FileSystem.uploadAsync(presigned.url, fileUri, {
@@ -35,10 +37,7 @@ export async function uploadToR2({
       throw new Error(`R2 upload failed: ${response.status} ${response.body}`);
     }
 
-    const etag =
-      response.headers?.etag ??
-      response.headers?.ETag ??
-      undefined;
+    const etag = response.headers?.etag ?? response.headers?.ETag ?? undefined;
 
     return {
       key: presigned.key,
