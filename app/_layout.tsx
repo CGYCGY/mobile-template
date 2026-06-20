@@ -62,7 +62,10 @@ function RootLayout() {
         <TamaguiProvider config={tamaguiConfig} defaultTheme="light">
           <ThemeProvider value={DefaultTheme}>
             <ConvexProvider client={convexClient}>
-              <GestureHandlerRootView style={{ flex: 1 }}>
+              {/* testID is the e2e harness's "app rendered" signal: it appears only
+                  past the fonts/splash gate and drops during a JS reload, which the
+                  native activity (identical while bundling/reloading) cannot show. */}
+              <GestureHandlerRootView testID="app-loaded" style={{ flex: 1 }}>
                 <SafeAreaProvider>
                   <StatusBar style="auto" />
                   <Stack screenOptions={{ headerShown: false }}>
